@@ -57,6 +57,7 @@ flowchart LR
 | `scripts/keep_awake.py` | Playwright check that opens the hosted app and wakes it if asleep |
 | `.github/workflows/keep-awake.yml` | Runs that check every 4 hours |
 | `deploy/` | Optional self-hosted setup on a VM (systemd + Caddy), for when data must persist |
+| `tests/` | Rule tests and the sample-set regression check (see section 10) |
 | `docs/` | This document and the business-logic document |
 | `annie_v4.db`, `storage/` | Created at runtime; git-ignored |
 
@@ -247,8 +248,19 @@ Scanned documents need RapidOCR (installed from `requirements.txt`) or a system 
 `ADMIN_PIN` in `.env` to use the reset buttons locally. Delete `annie_v4.db` and `storage/` (or use
 *Reset database*) to start clean.
 
-There is no automated test suite yet. The sample set works as a regression check: loading it should
-reproduce the outcomes listed in [BUSINESS_LOGIC.md, section 8](BUSINESS_LOGIC.md#8-the-sample-documents-and-what-they-demonstrate).
+**Tests** (plain Python; `pytest tests/` also works). Both run in a temporary folder and never touch
+the real database:
+
+```bash
+python tests/test_findings.py      # rules: currency, tax, duplicate references
+python tests/sample_regression.py  # the 21 samples still produce the outcomes in expected_samples.json
+```
+
+`sample_regression.py` loads the sample set into an empty Annie and compares routing, matching outcomes,
+final case and PO/PR states and waiting reasons with a snapshot (see
+[BUSINESS_LOGIC.md, section 8](BUSINESS_LOGIC.md#8-the-sample-documents-and-what-they-demonstrate)).
+Run it after every change to `annie_core.py`. If a change is meant to alter outcomes, review the
+differences it prints, then accept them with `--update`.
 
 ## 11. Limitations and technical debt
 
@@ -260,5 +272,7 @@ reproduce the outcomes listed in [BUSINESS_LOGIC.md, section 8](BUSINESS_LOGIC.m
   New supplier formats may need label aliases or reference samples (`reference_samples/`).
 * **UI coupling to Streamlit internals.** The stylesheet relies on Streamlit's `data-testid` attributes,
   which is why Streamlit is pinned; upgrade deliberately and re-check the UI.
-* **Open business-logic questions** (currency, tax, Module 2 rejections, date checks) are listed in
-  [BUSINESS_LOGIC.md, section 9](BUSINESS_LOGIC.md#9-review-findings).
+* **Open business-logic questions** (date checks, day-first dates, near-duplicate invoice numbers and
+  others) are listed in [BUSINESS_LOGIC.md, section 9](BUSINESS_LOGIC.md#9-review-findings).
+* **Test coverage is targeted.** The rule tests cover the November 2026 fixes; the sample regression
+  covers the main matching paths end to end. Extraction on new document layouts is not covered.

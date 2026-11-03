@@ -129,8 +129,12 @@ Function: `extract_fields_from_text` (section 7).
 * **Date.** The labelled date, or else the first date in the first 40 lines. Ambiguous numeric dates
   are read **day first** (03/04/2026 is 3 April 2026).
 * **Total and currency.** The labelled total, or else the last "Total ... 0.00" in the text, or else
-  the sum of the line totals. Currency comes from a code (SGD, USD, EUR, GBP, MYR, AUD, JPY, CNY) or a
-  symbol (S$ means SGD, $ means USD, plus EUR and GBP symbols).
+  the sum of the line totals. Currency comes from a code (SGD, USD, EUR, GBP, MYR, AUD, JPY, CNY) or an
+  unambiguous symbol (S$ means SGD, US$ means USD, plus the euro and pound signs). A bare "$" is left
+  as *unknown*, because it could be SGD, USD or another dollar.
+* **Subtotal and tax.** When a document prints them on their own lines ("Subtotal 3,000.00",
+  "GST 9%: SGD 270.00", also VAT and Sales tax), both amounts are kept. "GST Reg No" lines and the
+  "Tax Invoice" title are ignored. They are used to bill PO/PR balances before tax (section 3.3).
 * **Line items.** The first table whose header has a description-type column and a quantity/amount
   column. A goods row is `description  qty  unit price  total`; a service row is a description with a
   single amount. Reading stops at Subtotal/Total/Prepared by/Payment terms/Bank.
@@ -170,6 +174,7 @@ PO/PR that cites no amounts only needs descriptions, because it will become a Ca
 | `UNCLASSIFIED_ERROR` | Type could not be determined (or processing failed) | Intake Review |
 | `UNREADABLE_DOCUMENT` | No usable text extracted | Intake Review |
 | `UNSUPPORTED_DOCUMENT` | Readable but out of scope (for example a receipt) | Intake Review |
+| `DUPLICATE_REFERENCE` | Passed every check, but Module 2 already holds its PO/PR reference or invoice number (section 3.1 and 3.2) | Intake Review |
 
 **Intake Review actions.** *Re-extract from file* re-runs extraction (useful after the extraction rules
 or reference samples improve) and routes the document again. *Dismiss* deletes it and forgets its hash
@@ -184,7 +189,9 @@ Entry point: `process_document` (section 13).
 ### 3.1 Registering a PO/PR
 
 * **Unique reference.** A PO/PR whose reference matches one already registered (ignoring case,
-  spaces and punctuation) is rejected (`REJECTED_PO_REFERENCE_EXISTS`).
+  spaces and punctuation) is not registered (`REJECTED_PO_REFERENCE_EXISTS`). It goes to **Intake
+  Review** as `DUPLICATE_REFERENCE` with the reason, so a person can dismiss it (which also lets the file
+  be submitted again) instead of it disappearing.
 * **No amount cited means Call-Off.** If the PO/PR has no total above zero and no unit price or line
   total on any item, it is not given line balances. It opens a **Call-Off case** (`CALL-YYYY-NNNN`)
   that is matched by hand to one or more invoices (section 3.8).
@@ -194,7 +201,7 @@ Entry point: `process_document` (section 13).
 | Basis | When | Measured in |
 |---|---|---|
 | `QTY` | Goods with priced items | Quantity |
-| `AMOUNT` | Services (or goods without item lines) with a total above zero | Money; several invoices may bill against it |
+| `AMOUNT` | Services (or goods without item lines) with a total above zero | Money, before tax; several invoices may bill against it |
 | `SINGLE` | A services PO/PR that prices a line but whose total is zero | One invoice only (a rare edge case, see finding 6) |
 
 After registering, Annie **retries every waiting invoice**, oldest first (`retry_unallocated`), because
@@ -204,7 +211,8 @@ the new PO/PR may be the one they were waiting for.
 
 * **Unique invoice number per vendor.** If an invoice with the same number (ignoring case, spaces and
   punctuation) is already in Module 2 **and** the vendor names are at least **0.90** similar, the new one
-  is rejected (`REJECTED_INVOICE_NUMBER_EXISTS`). This stops one invoice consuming PO balance twice.
+  is not accepted (`REJECTED_INVOICE_NUMBER_EXISTS`). This stops one invoice consuming PO balance twice.
+  Like a repeated PO/PR reference, it goes to **Intake Review** as `DUPLICATE_REFERENCE` with the reason.
 * Otherwise a **case** is opened (`CASE-YYYY-NNNN`, numbered per year) in Stage 1 and automatic
   allocation is attempted.
 
@@ -219,7 +227,9 @@ line, or the whole invoice waits in Stage 1 with a reason.
 **Step 2: candidate PO/PR lines.** For each invoice line, a PO/PR line is a candidate only if:
 
 * the vendor names are at least **0.70** similar (`VENDOR_MIN`),
-* the line still has an open balance, and
+* the line still has an open balance,
+* the **currency is the same** as the invoice's (only checked when both documents state a currency;
+  an unknown currency never blocks), and
 * if the invoice line names a PO/PR, the line belongs to it; otherwise, if the invoice cites any
   PO/PRs, the line belongs to one of them; an invoice that cites nothing may match any PO/PR of that
   vendor.
@@ -245,7 +255,13 @@ score 1.0, a 5% difference about 0.52, and a difference of 10% of the higher pri
 **Step 4: accept and check capacity.** A candidate is acceptable at **0.80 or more**
 (`LINK_THRESHOLD`). Among acceptable candidates, the highest score with enough open balance is used
 (ties go to the earliest PO/PR line). Capacity is the open quantity for goods, the open amount for
-services by amount (0.005 tolerance), and one invoice for single-invoice lines. Balances are
+services by amount (0.005 tolerance), and one invoice for single-invoice lines.
+
+**Amounts are compared before tax** (`net_total`). For a service PO/PR and for an invoice billed as one
+amount, Annie uses the subtotal when the document prints one, or else the total minus the GST/VAT line,
+or else the total. So an invoice of 3,000.00 + 270.00 GST bills 3,000.00 against a PO/PR written for
+3,000.00 instead of being flagged as overbilling. Goods lines compare quantities and unit prices, which
+are before tax already. The app still displays each document's gross total. Balances are
 reserved line by line within the same invoice, so two lines cannot both use the same remaining quantity.
 
 **Step 5: commit.** When every line is placed, the billed quantities/amounts are added to the PO/PR
@@ -274,6 +290,7 @@ The case shows one or more of these reasons:
 | `'<line>' matches no open PO line (best 0.xx)` | Candidates exist but none reach 0.80. |
 | `'<line>' matches no open PO line: PR-... has nothing left to bill` | The vendor's PO/PRs are fully billed. |
 | `'<line>' matches no open PO line (no PO/PR for this vendor)` | No PO/PR with a vendor name at least 0.70 similar. |
+| `'<line>' matches no open PO line: PR-... is in SGD but the invoice is in USD` | The only candidates are in another currency. |
 | `'<line>' bills 4 but PR-... has only 3 left to bill` | A good match, but the invoice asks for more than is left: **overbilling**. |
 
 ### 3.5 Retry order
@@ -292,6 +309,8 @@ For invoices that do not match automatically, a user picks the PO/PR line for ea
 * Goods lines take a quantity; services by amount take an amount; a single-invoice line takes the
   whole invoice line and can be used once.
 * Open balances still apply; you cannot bill more than is left.
+* A PO/PR line in a different currency from the invoice cannot be chosen (it is left out of the picker
+  and refused if submitted).
 * Annie shows the automatic score for each choice and warns when it is below 0.80 or when the vendor
   similarity is below 0.70. You may still confirm, but **a typed reason of at least 5 characters is
   required** and is stored with the allocation and in the audit log.
@@ -308,8 +327,8 @@ For invoices that do not match automatically, a user picks the PO/PR line for ea
 
 A PO/PR that cites no amount (for example a framework or market-price order) opens a Call-Off case.
 Call-Offs are **never matched automatically**. A user selects the invoices that bill against it
-(sorted by vendor similarity, with a warning below 0.70), types a reason (at least 5 characters) and
-confirms. The invoices become *Matched to Call-Off* and the Call-Off case moves to Pending GR/SES.
+(sorted by vendor similarity, with a warning below 0.70 and a warning when the currencies differ),
+types a reason (at least 5 characters) and confirms. The invoices become *Matched to Call-Off* and the Call-Off case moves to Pending GR/SES.
 
 ---
 
@@ -384,7 +403,8 @@ Pending GR/SES and Complete include Call-Off cases in those states.
 | `CITATION_BONUS` | +0.25 | Module 2 | Added when the invoice cites the PO/PR |
 | `VENDOR_MIN` | 0.70 | Module 2 | Minimum vendor-name similarity for a candidate (and the warning level in manual matching) |
 | Duplicate invoice vendor check | 0.90 | Module 2 | Vendor similarity for "same invoice number from the same vendor" |
-| `ENFORCE_UNIQUE_INVOICE_NUMBER` | on | Module 2 | Reject a repeated invoice number from the same vendor |
+| `ENFORCE_UNIQUE_INVOICE_NUMBER` | on | Module 2 | Reject a repeated invoice number from the same vendor (sent to Intake Review) |
+| Currency rule | same code, or one unknown | Module 2 | An invoice is never billed against a PO/PR in another currency |
 | Amount tolerance | 0.005 | Module 2 | Rounding allowance for money balances |
 | Reason length | 5 characters | Module 2 | Minimum typed reason for manual match, unmatch and Call-Off confirmation |
 
@@ -410,14 +430,14 @@ file-name order, they produce:
 
 ## 9. Review findings
 
-A review of the business logic (November 2026). None of these were changed in code; each needs a
-decision from the team first.
+A review of the business logic (November 2026). Findings 1 to 3 are **fixed**; the rest need a
+decision from the team before anything changes.
 
-| # | Area | Finding | Impact | Suggestion |
+| # | Area | Finding | Impact | Status or suggestion |
 |---|---|---|---|---|
-| 1 | Matching | **Currency is extracted but never compared.** A USD invoice can be matched to an SGD PO/PR, and amounts in different currencies are added together. | Medium | Require the same currency for a match, or hold the invoice with a reason. |
-| 2 | Matching | **Tax is not separated.** For services billed by amount, the invoice amount (which may include GST/VAT) is compared with the PO/PR amount, so a correct invoice with tax can look overbilled. Goods lines compare unit prices and are less affected. | Medium | Agree whether PO/PR amounts include tax; compare like with like. |
-| 3 | Module 2 | **Rejected duplicates are a dead end.** A document rejected in Module 2 (PO/PR reference or invoice number already exists) is recorded as routed to Module 2 but has no case, does not appear in Intake Review, and re-uploading the same file is blocked as a duplicate file. It is visible only in Documents and the Audit Log. | Medium | Route these to Intake Review with the reason, so someone confirms or dismisses them. |
+| 1 | Matching | **Currency was extracted but never compared.** A USD invoice could be matched to an SGD PO/PR. | Medium | **Fixed.** A PO/PR line in another currency is not a candidate; manual match refuses it; Call-Off matching warns. A bare "$" now counts as unknown instead of USD, so Singapore "$" documents are not wrongly blocked. |
+| 2 | Matching | **Tax was not separated.** For services billed by amount, an invoice including GST/VAT was compared with a PO/PR amount without it, so a correct invoice looked overbilled. | Medium | **Fixed.** Subtotal and GST/VAT lines are extracted and PO/PR balances are billed before tax (section 3.3). Genuine overbilling is still caught. |
+| 3 | Module 2 | **Rejected duplicates were a dead end.** A document whose PO/PR reference or invoice number already existed had no case, did not appear in Intake Review, and could not be re-uploaded. | Medium | **Fixed.** It now goes to Intake Review as `DUPLICATE_REFERENCE` with the reason; dismissing it frees the file to be submitted again. |
 | 4 | Matching | **No date checks.** An invoice dated before its PO/PR, or service dates outside the PO/PR period, are not flagged. | Low | Warn on invoice-before-PO and on out-of-period service dates. |
 | 5 | Intake | **Day-first dates.** Ambiguous numeric dates are read day first, so a US-format 03/04/2026 becomes 3 April. | Low | Keep, but document per supplier or detect the format from unambiguous dates. |
 | 6 | Module 2 | **"Single invoice" basis is now rare.** PO/PRs with no amount open Call-Offs, so the single-invoice basis only occurs for a services PO/PR that prices a line but states a zero total. The extra paths remain in the code. | Info | Decide whether to retire it to simplify the logic. |

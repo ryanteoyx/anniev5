@@ -49,6 +49,13 @@ streamlit run app.py
 The app opens at http://localhost:8501 and loads the 21 sample documents from `samples/` on first
 start. To reset it, set `ADMIN_PIN` in a `.env` file and use **Controls → Demo data**.
 
+Run the tests after changing `annie_core.py`:
+
+```bash
+python tests/test_findings.py
+python tests/sample_regression.py
+```
+
 ## Deployment
 
 The live demo runs on **Streamlit Community Cloud** (free) from the `ui-polish` branch with Python
@@ -99,6 +106,7 @@ The mailbox is opened read-only and mail is never marked as read.
 | `samples/` | 21 sample PO/PRs and invoices (the demo data) |
 | `reference_samples/` | Optional reference documents and labels that tune classification |
 | `docs/` | Business logic and architecture documentation |
+| `tests/` | Rule tests and the sample-set regression check |
 | `scripts/`, `.github/workflows/` | Keep-awake check for the hosted demo |
 | `deploy/` | Optional self-hosted VM setup |
 | `annie_v4.db`, `storage/` | Created at runtime (git-ignored) |
