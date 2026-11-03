@@ -1,3 +1,16 @@
+---
+title: Annie
+emoji: 📄
+colorFrom: blue
+colorTo: indigo
+sdk: streamlit
+sdk_version: 1.66.1
+python_version: "3.11"
+app_file: app.py
+pinned: false
+short_description: Invoice & PO intake with 3-way matching
+---
+
 # Annie
 
 Annie is a document-intake and **3-way matching** tool for accounts payable. It ingests
