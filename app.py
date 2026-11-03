@@ -4,6 +4,7 @@
 # 1. IMPORTS AND SETUP
 # =====================================================================================
 import base64
+import hmac
 import html
 import os
 from datetime import date
@@ -19,6 +20,36 @@ import annie_core as annie
 st.set_page_config(page_title="Annie v4", layout="wide")
 con = annie.connect()
 SAMPLES = Path(__file__).parent / "samples"
+
+
+def setting(name, default=None):
+    """A deploy setting: Streamlit secrets (Community Cloud) first, then the environment / .env."""
+    try:
+        if name in st.secrets:
+            return str(st.secrets[name])
+    except Exception:   # no secrets file, e.g. a local run
+        pass
+    return os.getenv(name, default)
+
+
+def load_demo(con):
+    """Run every sample PDF through Module 1 and Module 2 exactly like an upload, in file-name order."""
+    out = []
+    for p in sorted(SAMPLES.glob("*.pdf")):
+        out += annie.ingest_file(con, p.name, p.read_bytes(), channel="UPLOAD")
+    return out
+
+
+@st.cache_resource(show_spinner="Preparing the demo data...")
+def demo_autoload(_con):
+    """Once per app start: an empty database gets the demo documents, so the site never opens blank.
+    The free host wipes the disk on restart, so this is what brings the demo back. DEMO_AUTOLOAD=0 turns it off."""
+    if setting("DEMO_AUTOLOAD", "1") == "0" or annie.list_documents(_con):
+        return 0
+    return len(load_demo(_con))
+
+
+demo_autoload(con)
 ss = st.session_state
 ss.setdefault("results", [])
 ss.setdefault("view_case", None)
@@ -584,6 +615,7 @@ hr {border-color:#e6e9ef; margin:1.4rem 0;}
 [data-testid="stMain"] button[kind="secondary"] {border-radius:8px; border:1px solid #d6dbe4; color:#334155; font-weight:500; background:#ffffff;}
 [data-testid="stMain"] button[kind="secondary"]:hover {border-color:#2563eb; color:#1d4ed8; background:#f0f5ff;}
 [data-testid="stMain"] button[kind] p {white-space:nowrap;}
+[data-testid="stMain"] button[kind]:disabled {opacity:.45; cursor:not-allowed; box-shadow:none;}
 
 /* ---- Inputs ---------------------------------------------------------- */
 [data-testid="stFileUploaderDropzone"] {background:#fbfcfe; border:1.5px dashed #c6cedb; border-radius:12px; padding:1.3rem;}
@@ -1034,12 +1066,33 @@ elif page == "audit":
 # 12. PAGE: CONTROLS (sample data, database reset, Module 1 status)
 # =====================================================================================
 elif page == "controls":
-    with st.container(key="card_samples"):
-        st.subheader("Sample data")
-        if st.button("Load sample documents") and SAMPLES.exists():
-            ss.results += annie.load_samples(con, SAMPLES)
+    admin_pin = setting("ADMIN_PIN") or ""
+    with st.container(key="card_demo"):
+        st.subheader("Demo data")
+        st.caption(f"Resets the database and runs the {len(list(SAMPLES.glob('*.pdf')))} sample documents through the real "
+                   "pipeline, so every stage has something to show. The app also does this by itself when it starts "
+                   "with an empty database.")
+        if admin_pin:
+            entered = st.text_input("Admin PIN", type="password", key="admin_pin_entry",
+                                    placeholder="Needed to reset or reload the data")
+        else:
+            entered = ""
+            st.info("Reset and reload are locked until an `ADMIN_PIN` is set "
+                    "(Streamlit Cloud: app Settings → Secrets; locally: the `.env` file).")
+        unlocked = bool(admin_pin) and hmac.compare_digest(entered.encode(), admin_pin.encode())
+        if admin_pin and entered and not unlocked:
+            st.error("Wrong PIN.")
+        if st.button("Reset & load demo data", type="primary", key="demo_reload", disabled=not unlocked):
+            with st.spinner("Loading the demo documents..."):
+                annie.reset_db(con)
+                count = len(load_demo(con))
+            ss.results = []
+            ss.flash = [f"Demo data reloaded: {count} documents processed."]
             st.rerun()
-        st.caption("Optional: loads pre-extracted sample JSONs (if a samples folder with JSON files exists) in place of Module 1 text extraction.")
+        if any(SAMPLES.glob("*.json")):   # original test loader: pre-extracted sample JSONs in place of Module 1
+            if st.button("Load sample JSONs", disabled=not unlocked):
+                ss.results += annie.load_samples(con, SAMPLES)
+                st.rerun()
     with st.container(key="card_inbox"):
         st.subheader("Inbox monitor (automatic fetch)")
         mon = annie.monitor_status()
@@ -1077,8 +1130,9 @@ elif page == "controls":
         st.caption(f"Line-match threshold >= {annie.LINK_THRESHOLD}   |   Vendor-name gate >= {annie.VENDOR_MIN}")
     with st.container(key="card_danger"):
         st.subheader("Danger zone")
-        if st.button("Reset database", key="reset_db"):
+        if st.button("Reset database (empty)", key="reset_db", disabled=not unlocked):
             annie.reset_db(con)
             ss.results = []
             st.rerun()
-        st.caption("Deletes every document, case, allocation, GR/SES, archive entry and log line. This cannot be undone.")
+        st.caption("Deletes every document, case, allocation, GR/SES, archive entry and log line, leaving the app empty "
+                   "(e.g. to upload live during a demo). Needs the admin PIN above. This cannot be undone.")

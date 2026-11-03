@@ -57,6 +57,17 @@ GitHub emails you. Update `APP_URL` in the workflow if the app's address changes
 Note: Community Cloud's disk is not persistent — the SQLite database and uploaded files reset
 whenever the app restarts. For durable data, see [`deploy/`](deploy/) (self-hosted VM).
 
+## Demo mode
+
+- **Auto-load:** when the app starts with an empty database it runs the PDFs in `samples/` through
+  the real pipeline, so the live demo never opens blank — even after the host wipes the disk.
+  Set `DEMO_AUTOLOAD=0` to turn this off.
+- **Controls → Demo data → Reset & load demo data** puts the demo back to its starting state
+  before each presentation; **Danger zone → Reset database (empty)** clears it for live uploads.
+- Both are locked behind an **admin PIN**. Set it as `ADMIN_PIN = "..."` in the app's
+  Settings → Secrets on Streamlit Cloud (or `ADMIN_PIN=...` in `.env` locally). Without a PIN
+  they stay locked. Visitors can still browse, open cases and upload.
+
 ## Optional: email intake
 
 Set these environment variables (e.g. in a `.env` file) to enable the background inbox monitor:
