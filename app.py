@@ -17,7 +17,7 @@ import streamlit.components.v1 as components
 
 import annie_core as annie
 
-st.set_page_config(page_title="Annie v4", layout="wide")
+st.set_page_config(page_title="Annie", layout="wide")
 con = annie.connect()
 SAMPLES = Path(__file__).parent / "samples"
 
@@ -61,8 +61,6 @@ ss.results += annie.pop_monitor_results()   # documents the background scan inge
 for _a in annie.pop_monitor_alerts():
     st.toast(f"{_a['title']}: {_a['detail']}")
 UPLOAD_TYPES = sorted(e.lstrip(".") for e in annie.SUPPORTED_EXTENSIONS)
-ROUTE_ICON = {annie.R_M2: "✅", annie.R_REVIEW: "🕵️", annie.R_DUP_FILE: "⛔", annie.R_DUP_CONTENT: "⛔", "REJECTED": "🚫"}
-M2_ICON = {"REGISTERED": "📄", "ALLOCATED": "🔗", "UNALLOCATED": "⏳", "CALLOFF_OPENED": "📞"}
 DEFAULT_ORDER = "Default order"
 
 
@@ -126,7 +124,7 @@ def controls(key, rows, sort_fields):
     """Filter box + sort selector + order toggle + 'x of y entries' counter. Returns the filtered, sorted rows."""
     with st.container(key=f"ctl_{key}"):
         c1, c2, c3, c4 = st.columns([3, 2, 1.4, 2], vertical_alignment="center")
-    q = c1.text_input("Filter", key=f"flt_{key}", placeholder="🔎 Filter entries...", label_visibility="collapsed")
+    q = c1.text_input("Filter", key=f"flt_{key}", placeholder="Filter entries", label_visibility="collapsed")
     field = c2.selectbox("Sort by", [DEFAULT_ORDER] + list(sort_fields), key=f"srt_{key}",
                          label_visibility="collapsed", format_func=lambda f: f if f == DEFAULT_ORDER else f"Sort by: {_label(f)}")
     desc = c3.toggle("Descending", key=f"dsc_{key}")
@@ -142,30 +140,39 @@ def controls(key, rows, sort_fields):
 
 
 def bubble(n):
-    """Small number bubble for tab names (circled digits; plain (n) above 20)."""
+    """Count badge for nav items and tab names (rendered by Streamlit's markdown badge, styled in CSS)."""
     if not n:
         return ""
-    return " " + (chr(0x2460 + n - 1) if n <= 20 else f"({n})")
+    return f" :gray-badge[{n}]"
 
 
 # --- Presentation-only helpers (pills, table cells, detail headers, column labels) ---
-PILL = {annie.S_OPEN_PO: "amber", annie.S_OPEN_INV: "blue", annie.S_PART: "blue", annie.S_BILLED: "green",
-        annie.S_CALLOFF: "blue", annie.S_CALLED: "green", annie.S_GR: "slate", annie.S_DONE: "green",
-        annie.S_ARCHIVED: "slate"}
+# Three meanings only: needs someone's action (warn), finished (ok), everything else in progress (neutral).
+PILL = {annie.S_OPEN_PO: "warn", annie.S_CALLOFF: "warn",
+        annie.S_BILLED: "ok", annie.S_CALLED: "ok", annie.S_DONE: "ok"}
 _UPPER = {"po", "pr", "po/pr", "id", "gr", "ses", "gr/ses"}
 
 
 def pill(text):
     """A status as a coloured pill."""
-    return f'<span class="pill {PILL.get(text, "slate")}">{html.escape(str(text))}</span>'
+    return f'<span class="pill {PILL.get(text, "neutral")}">{html.escape(str(text))}</span>'
+
+
+def md(text):
+    """Plain text that is safe inside a markdown label (file names are full of underscores)."""
+    return str(text).replace("\\", "\\\\").replace("_", "\\_").replace("*", "\\*")
 
 
 def cell(col, value, cls="", as_pill=False):
     """One table cell as plain HTML text, so '-' or '1.' never turn into markdown list markers."""
     if value in (None, "", "-"):
         body = '<span class="muted">—</span>'
+    elif as_pill:
+        body = pill(value)
+    elif cls == "refs":   # several PO/PRs: wrap between references, never inside one at its hyphens
+        body = ", ".join(f'<span class="nowrap">{html.escape(v.strip())}</span>' for v in str(value).split(","))
     else:
-        body = pill(value) if as_pill else html.escape(str(value))
+        body = html.escape(str(value))
     col.markdown(f'<div class="td {cls}">{body}</div>', unsafe_allow_html=True)
 
 
@@ -205,11 +212,10 @@ def render_results(results):
     rows = controls("results", rows, ["source_file", "m1_status", "route", "record_id"])
     for r in rows:
         m2 = r.get("m2") or {}
-        label = (f"{ROUTE_ICON.get(r.get('route'), 'ℹ️')} {r.get('source_file') or r.get('record_id')} - "
-                 f"{r.get('m1_status')} - {r.get('route')}")
+        parts = [f"**{md(r.get('source_file') or r.get('record_id'))}**", nice(r.get("m1_status")), nice(r.get("route"))]
         if m2:
-            label += f" -> {M2_ICON.get(m2.get('outcome'), '')} {m2.get('outcome')} {m2.get('case_id') or ''} {m2.get('status') or ''}"
-        with st.expander(label):
+            parts.append(" ".join(md(x) for x in (nice(m2.get("outcome")), m2.get("case_id"), m2.get("status")) if x))
+        with st.expander("  ·  ".join(parts)):
             st.json(r)
 
 
@@ -584,133 +590,158 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
+/* ---- Palette: neutrals, one accent, three status colours. Every colour on the page comes from here. ---- */
+:root {
+    --ink:#0f172a;          /* headings, key figures */
+    --ink-2:#334155;        /* body text */
+    --muted:#64748b;        /* labels, captions */
+    --faint:#94a3b8;        /* placeholders, empty values */
+    --line:#e2e8f0;         /* borders */
+    --line-strong:#cbd5e1;  /* input borders, dashed drop zone */
+    --line-soft:#f1f5f9;    /* row dividers, hover and neutral fills */
+    --canvas:#f8fafc;       /* page background */
+    --surface:#ffffff;      /* cards, tables, sidebar */
+    --accent:#2563eb;       /* primary actions, links, active tab */
+    --accent-strong:#1d4ed8;
+    --ok:#15803d;   --ok-soft:#f0fdf4;
+    --warn:#b45309; --warn-soft:#fffbeb;
+    --bad:#b91c1c;  --bad-soft:#fef2f2;
+}
+
 /* ---- Base typography & canvas ---------------------------------------- */
 html, body, [class*="st-"], .stMarkdown, button, input, textarea, select {
     font-family:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;}
 /* Streamlit draws icons from ligatures in its own icon font - never override it */
 [data-testid="stIconMaterial"], .material-symbols-rounded {font-family:'Material Symbols Rounded' !important;}
-.stApp {background:#f6f7f9;}
+.stApp {background:var(--canvas); color:var(--ink-2);}
 .block-container, [data-testid="stMainBlockContainer"] {max-width:1280px; padding-top:2.6rem; padding-bottom:4rem;}
 /* hide Streamlit's Deploy/menu chrome and heading anchors, but keep the sidebar open/close button usable */
 [data-testid="stToolbarActions"], [data-testid="stAppDeployButton"], [data-testid="stDecoration"], [data-testid="stMainMenu"],
 [data-testid="stHeaderActionElements"], footer, #MainMenu {display:none !important;}
-[data-testid="stHeader"] {background:rgba(246,247,249,.86); backdrop-filter:blur(8px);}
-[data-testid="stExpandSidebarButton"] {background:#16233a; color:#ffffff; border-radius:10px; width:40px; height:40px;
-    box-shadow:0 2px 8px rgba(16,24,40,.18);}
-[data-testid="stExpandSidebarButton"] svg, [data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"] {fill:#ffffff; color:#ffffff !important;}
-[data-testid="stExpandSidebarButton"]:hover {background:#223454;}
+[data-testid="stHeader"] {background:rgba(248,250,252,.86); backdrop-filter:blur(8px);}
+[data-testid="stExpandSidebarButton"] {background:var(--surface); border:1px solid var(--line); border-radius:8px;
+    width:40px; height:40px; box-shadow:0 1px 2px rgba(15,23,42,.06);}
+[data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"] {color:var(--ink) !important;}
+[data-testid="stExpandSidebarButton"]:hover {background:var(--line-soft);}
 
 /* ---- Headings (Streamlit >= 1.4x: the main area is [data-testid="stMain"], not .main) ---- */
-[data-testid="stMain"] h1, [data-testid="stMain"] h2 {color:#0f172a; font-weight:700; letter-spacing:-.02em;}
-[data-testid="stMain"] h2 {font-size:1.9rem; margin-bottom:.2rem;}
-[data-testid="stMain"] h3 {color:#1e293b; font-weight:600; letter-spacing:-.01em; font-size:1.12rem; padding:.2rem 0 .3rem;}
-[data-testid="stMain"] h4 {color:#475569; font-weight:600; font-size:.78rem; text-transform:uppercase; letter-spacing:.05em; padding:.6rem 0 .2rem;}
-hr {border-color:#e6e9ef; margin:1.4rem 0;}
-[data-testid="stCaptionContainer"] {color:#64748b;}
+[data-testid="stMain"] h1, [data-testid="stMain"] h2 {color:var(--ink); font-weight:600; letter-spacing:-.02em;}
+[data-testid="stMain"] h2 {font-size:1.75rem; margin-bottom:0;}
+[data-testid="stMain"] h3 {color:var(--ink); font-weight:600; letter-spacing:-.01em; font-size:1.05rem; padding:.2rem 0 .3rem;}
+[data-testid="stMain"] h4 {color:var(--muted); font-weight:600; font-size:.74rem; text-transform:uppercase; letter-spacing:.05em; padding:.6rem 0 .2rem;}
+hr {border-color:var(--line); margin:1.4rem 0;}
+[data-testid="stCaptionContainer"] {color:var(--muted);}
 
 /* ---- Buttons --------------------------------------------------------- */
-[data-testid="stMain"] button[kind="primary"] {background:#2563eb; border:1px solid #2563eb; border-radius:8px;
-    font-weight:600; box-shadow:0 1px 2px rgba(37,99,235,.25);}
-[data-testid="stMain"] button[kind="primary"]:hover {background:#1d4ed8; border-color:#1d4ed8;}
-[data-testid="stMain"] button[kind="secondary"] {border-radius:8px; border:1px solid #d6dbe4; color:#334155; font-weight:500; background:#ffffff;}
-[data-testid="stMain"] button[kind="secondary"]:hover {border-color:#2563eb; color:#1d4ed8; background:#f0f5ff;}
+[data-testid="stMain"] button[kind="primary"] {background:var(--accent); border:1px solid var(--accent); border-radius:8px; font-weight:600; box-shadow:none;}
+[data-testid="stMain"] button[kind="primary"]:hover {background:var(--accent-strong); border-color:var(--accent-strong);}
+[data-testid="stMain"] button[kind="secondary"] {border-radius:8px; border:1px solid var(--line-strong); color:var(--ink-2); font-weight:500; background:var(--surface);}
+[data-testid="stMain"] button[kind="secondary"]:hover {border-color:var(--faint); color:var(--ink); background:var(--line-soft);}
 [data-testid="stMain"] button[kind] p {white-space:nowrap;}
-[data-testid="stMain"] button[kind]:disabled {opacity:.45; cursor:not-allowed; box-shadow:none;}
+[data-testid="stMain"] button[kind]:disabled {background:var(--line-soft) !important; border-color:var(--line) !important;
+    color:var(--faint) !important; opacity:1; cursor:not-allowed; box-shadow:none;}
 
 /* ---- Inputs ---------------------------------------------------------- */
-[data-testid="stFileUploaderDropzone"] {background:#fbfcfe; border:1.5px dashed #c6cedb; border-radius:12px; padding:1.3rem;}
-[data-testid="stMain"] [data-baseweb="select"] > div, [data-testid="stMain"] [data-baseweb="input"],
-[data-testid="stMain"] [data-baseweb="base-input"] {border-radius:8px;}
+[data-testid="stFileUploaderDropzone"] {background:var(--canvas); border:1.5px dashed var(--line-strong); border-radius:12px; padding:1.3rem;}
+[data-testid="stMain"] [data-testid="stTextInputRootElement"],
+[data-testid="stMain"] [data-testid="stSelectbox"] div:has(> input),
+[data-testid="stMain"] [data-testid="stNumberInputContainer"] {background:var(--surface); border:1px solid var(--line-strong); border-radius:8px;}
+[data-testid="stMain"] [data-testid="stTextInputRootElement"]:focus-within,
+[data-testid="stMain"] [data-testid="stSelectbox"] div:has(> input):focus-within,
+[data-testid="stMain"] [data-testid="stNumberInputContainer"]:focus-within {border-color:var(--accent);}
 
-/* ---- Alerts / dataframes / expanders / cards ------------------------- */
-[data-testid="stAlert"] {border-radius:10px;}
-[data-testid="stDataFrame"], [data-testid="stTable"] {border:1px solid #e6e9ef; border-radius:12px; overflow:hidden; background:#ffffff;}
-[data-testid="stExpander"] details {background:#ffffff; border:1px solid #e6e9ef; border-radius:12px;}
-[data-testid="stExpander"] summary:hover {color:#1d4ed8;}
-[class*="st-key-card_"] {background:#ffffff; border:1px solid #e6e9ef; border-radius:14px; padding:18px 22px 20px;
-    box-shadow:0 1px 2px rgba(16,24,40,.04);}
-.st-key-card_danger {border-color:#f5c2c2; background:#fffafa;}
-[data-testid="stMain"] .st-key-card_danger h3 {color:#b42318;}
-[data-testid="stMain"] .st-key-reset_db button[kind] {background:#dc2626; border-color:#dc2626; color:#ffffff;}
-[data-testid="stMain"] .st-key-reset_db button[kind]:hover {background:#b91c1c; border-color:#b91c1c; color:#ffffff;}
+/* ---- Alerts: routine notes stay neutral; warnings and errors keep their colour ---- */
+[data-testid="stAlertContainer"] {border-radius:10px;}
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]) {background:var(--surface); border:1px solid var(--line); color:var(--ink-2);}
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]) * {color:var(--ink-2);}
+
+/* ---- Tables, expanders, cards ---------------------------------------- */
+[data-testid="stDataFrame"], [data-testid="stTable"] {border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--surface);}
+[data-testid="stExpander"] details {background:var(--surface); border:1px solid var(--line); border-radius:12px;}
+[data-testid="stExpander"] summary:hover {color:var(--ink);}
+[class*="st-key-card_"] {background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:18px 22px 20px;}
+.st-key-card_danger {border-color:color-mix(in srgb, var(--bad) 25%, white); background:var(--bad-soft);}
+[data-testid="stMain"] .st-key-card_danger h3 {color:var(--bad);}
+[data-testid="stMain"] .st-key-reset_db button[kind] {background:var(--bad); border-color:var(--bad); color:var(--surface);}
+[data-testid="stMain"] .st-key-reset_db button[kind]:hover {background:color-mix(in srgb, var(--bad) 85%, black); border-color:color-mix(in srgb, var(--bad) 85%, black); color:var(--surface);}
 
 /* ---- Row tables (case lists, PO/PR balances, call-offs, archive) ------
    Header and rows scroll sideways together on narrow screens instead of collapsing into a column. */
-[class*="st-key-tbl_"] {background:#ffffff; border:1px solid #e6e9ef; border-radius:12px; padding:2px 16px 4px;
+[class*="st-key-tbl_"] {background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:2px 16px 4px;
     gap:0 !important; overflow-x:auto;}
-[class*="st-key-tbl_"] [data-testid="stHorizontalBlock"] {flex-wrap:nowrap !important; min-width:1040px; align-items:center;
-    gap:14px; padding:10px 0; border-top:1px solid #eef1f5;}
+[class*="st-key-tbl_"] [data-testid="stHorizontalBlock"] {flex-wrap:nowrap !important; min-width:960px; align-items:center;
+    gap:14px; padding:10px 0; border-top:1px solid var(--line-soft);}
 [class*="st-key-tbl_"] [data-testid="stHorizontalBlock"]:has(.th) {border-top:none; padding:12px 0 8px;}
-[class*="st-key-tbl_"] [data-testid="stHorizontalBlock"]:not(:has(.th)):hover {background:#f8fafc;}
+[class*="st-key-tbl_"] [data-testid="stHorizontalBlock"]:not(:has(.th)):hover {background:var(--canvas);}
 [class*="st-key-tbl_"] [data-testid="stColumn"] {min-width:0 !important;}
-.th {color:#64748b; font-size:.7rem; font-weight:600; text-transform:uppercase; letter-spacing:.05em;}
-.td {color:#1e293b; font-size:.87rem; line-height:1.4;}
+.th {color:var(--muted); font-size:.7rem; font-weight:600; text-transform:uppercase; letter-spacing:.05em;}
+.td {color:var(--ink-2); font-size:.87rem; line-height:1.4;}
 .td.id, .td.num {white-space:nowrap; font-variant-numeric:tabular-nums;}
 .td.id, .td.refs {font-size:.84rem;}
-.td.refs {font-variant-numeric:tabular-nums;}   /* may hold several PO/PRs, so it wraps */
+.td.refs {font-variant-numeric:tabular-nums;}   /* may hold several PO/PRs, so it wraps between them */
+.td .nowrap {white-space:nowrap;}
 .td.num {text-align:right;}
-.td.reason {color:#475569; font-size:.83rem;}
-.td .muted {color:#94a3b8;}
+.td.reason {color:var(--muted); font-size:.83rem;}
+.td .muted {color:var(--faint);}
 [data-testid="stMain"] [class*="st-key-tbl_"] button[kind] {white-space:nowrap; padding:.2rem .9rem; min-height:2rem; font-size:.84rem;}
 
 /* ---- Detail page header (case / PO/PR / call-off) --------------------- */
 .detail-head {display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; margin:.6rem 0 .25rem;}
-.detail-head .ref {font-size:1.65rem; font-weight:700; color:#0f172a; letter-spacing:-.02em;}
-.detail-head .pill {font-size:.8rem; padding:3px 12px;}
-.detail-meta {display:flex; flex-wrap:wrap; gap:4px 20px; color:#64748b; font-size:.88rem; margin-bottom:1rem;}
-.detail-meta b {color:#1e293b; font-weight:600;}
+.detail-head .ref {font-size:1.6rem; font-weight:600; color:var(--ink); letter-spacing:-.02em;}
+.detail-head .pill {font-size:.78rem; padding:3px 10px;}
+.detail-meta {display:flex; flex-wrap:wrap; gap:4px 20px; color:var(--muted); font-size:.88rem; margin-bottom:1rem;}
+.detail-meta b {color:var(--ink); font-weight:600;}
 
-/* ---- Dashboard stat cards ------------------------------------------- */
-.stat-grid {display:grid; grid-template-columns:repeat(auto-fit, minmax(176px, 1fr)); gap:16px; margin:.4rem 0 1.4rem 0;}
-.stat-card {background:#ffffff; border:1px solid #e6e9ef; border-radius:14px; padding:18px 20px;
-    box-shadow:0 1px 2px rgba(16,24,40,.04); transition:box-shadow .15s, transform .15s;}
-.stat-card:hover {box-shadow:0 6px 18px rgba(16,24,40,.08); transform:translateY(-1px);}
-.stat-card .label {color:#64748b; font-size:.74rem; font-weight:600; text-transform:uppercase; letter-spacing:.05em;}
-.stat-card .value {color:#0f172a; font-size:2.1rem; font-weight:700; line-height:1.15; margin-top:.35rem; letter-spacing:-.02em;}
-.stat-card .foot {color:#94a3b8; font-size:.78rem; margin-top:.2rem;}
-.stat-card.accent {border-top:3px solid #2563eb;}
-.stat-card.amber {border-top:3px solid #f59e0b;}
-.stat-card.green {border-top:3px solid #16a34a;}
-.stat-card.slate {border-top:3px solid #64748b;}
+/* ---- Dashboard figures: neutral cards, the number carries the weight --- */
+.stat-grid {display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px; margin:.6rem 0 1.4rem 0;}
+.stat-card {background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:16px 18px;}
+.stat-card .label {color:var(--muted); font-size:.78rem; font-weight:500;}
+.stat-card .value {color:var(--ink); font-size:1.85rem; font-weight:600; line-height:1.2; margin-top:.3rem;
+    letter-spacing:-.02em; font-variant-numeric:tabular-nums;}
+.stat-card .foot {color:var(--faint); font-size:.76rem; margin-top:.15rem;}
 
-/* ---- Status pills ---------------------------------------------------- */
-.pill {display:inline-block; padding:2px 10px; border-radius:999px; font-size:.74rem; font-weight:600; line-height:1.5; white-space:nowrap;}
-.pill.green {background:#e7f6ec; color:#157347;}
-.pill.amber {background:#fdf3e2; color:#b7791f;}
-.pill.red {background:#fdeaea; color:#c0392b;}
-.pill.blue {background:#e8f0fe; color:#1d4ed8;}
-.pill.slate {background:#eef1f5; color:#475569;}
+/* ---- Status pills: three meanings, plus neutral ----------------------- */
+.pill {display:inline-block; padding:2px 9px; border-radius:999px; font-size:.74rem; font-weight:500; line-height:1.5; white-space:nowrap;}
+.pill.ok {background:var(--ok-soft); color:var(--ok);}
+.pill.warn {background:var(--warn-soft); color:var(--warn);}
+.pill.bad {background:var(--bad-soft); color:var(--bad);}
+.pill.neutral {background:var(--line-soft); color:var(--ink-2);}
 
-/* ---- Hint / lead paragraph ------------------------------------------ */
-.lead {color:#475569; font-size:.95rem; line-height:1.55; background:#eef2f9; border:1px solid #e2e8f3;
-    border-radius:12px; padding:14px 16px; margin-bottom:1rem;}
+/* ---- Count badges (nav items, processing tabs) ------------------------ */
+.stMarkdownBadge {background:var(--line-soft) !important; color:var(--muted) !important; font-size:.72rem !important;
+    font-weight:600; border-radius:999px; padding:0 .45rem !important; font-variant-numeric:tabular-nums;}
 
-/* ---- Sidebar (kept, lightly refined) -------------------------------- */
-[data-testid="stSidebar"] {background:#16233a;}
-[data-testid="stSidebar"] h3 {color:#ffffff; letter-spacing:.6px; padding:.2rem .4rem 1rem .4rem; font-weight:700;}
+/* ---- Sidebar: light, like the rest of the page ------------------------ */
+[data-testid="stSidebar"] {background:var(--surface); border-right:1px solid var(--line);}
+[data-testid="stSidebar"] h3 {color:var(--ink); font-weight:700; letter-spacing:-.01em; padding:.2rem .5rem 1rem .5rem;}
 [class*="st-key-side_"], [class*="st-key-side_"] [data-testid="stButton"] {width:100% !important;}
-[class*="st-key-side_"] button {width:100%; justify-content:flex-start; text-align:left; border-radius:8px; padding:.6rem 1rem;
-    margin:0 0 3px 0; font-weight:500; background:transparent; color:#c9d4e3; border:1px solid transparent; box-shadow:none;}
-[class*="st-key-side_"] button p {color:inherit; margin:0; width:100%; text-align:left;}
-/* Streamlit wraps the label in flex boxes that centre it; keep nav labels left-aligned in the full-width button */
-[class*="st-key-side_"] button > div, [class*="st-key-side_"] button > div > span {justify-content:flex-start; width:100%;}
-[class*="st-key-side_"] button[kind="secondary"]:hover {background:#223454; border-color:#31497a; color:#ffffff;}
-[class*="st-key-side_"] button[kind="primary"] {background:#0c1626; color:#ffffff; border:1px solid #060d18;
-    border-left:4px solid #4da3ff; box-shadow:inset 0 3px 8px rgba(0,0,0,.6);}
-[class*="st-key-side_"] button[kind="primary"]:hover {background:#0c1626; color:#ffffff; border-color:#060d18; border-left-color:#4da3ff;}
-/* Processing stages: a segmented pill row that scrolls sideways on phones */
-.st-key-ptabs [data-testid="stHorizontalBlock"] {flex-wrap:nowrap !important; overflow-x:auto; gap:8px; padding-bottom:2px;}
+[class*="st-key-side_"] button {width:100%; justify-content:flex-start; text-align:left; border-radius:8px; padding:.5rem .75rem;
+    min-height:0; margin:0 0 2px 0; font-weight:500; background:transparent; color:var(--ink-2); border:none; box-shadow:none;}
+/* Streamlit wraps the label in flex boxes that centre it; keep labels left and push the count badge right */
+[class*="st-key-side_"] button > div, [class*="st-key-side_"] button > div > span,
+[class*="st-key-side_"] button [data-testid="stMarkdownContainer"] {justify-content:flex-start; width:100%;}
+[class*="st-key-side_"] button p {color:inherit; margin:0; width:100%; text-align:left; display:flex; align-items:center; gap:.5rem;}
+[class*="st-key-side_"] button .stMarkdownBadge {margin-left:auto;}
+[class*="st-key-side_"] button[kind="secondary"]:hover {background:var(--line-soft); color:var(--ink);}
+[class*="st-key-side_"] button[kind="primary"], [class*="st-key-side_"] button[kind="primary"]:hover {background:var(--line-soft); color:var(--ink); font-weight:600;}
+[class*="st-key-side_"] button[kind="primary"] .stMarkdownBadge {background:var(--surface) !important;}
+
+/* ---- Processing stages: underline tabs with counts; scroll sideways on phones ---- */
+.st-key-ptabs {border-bottom:1px solid var(--line); margin-bottom:.4rem;}
+.st-key-ptabs [data-testid="stHorizontalBlock"] {flex-wrap:nowrap !important; overflow-x:auto; gap:4px;}
 .st-key-ptabs [data-testid="stColumn"] {flex:0 0 auto !important; width:auto !important; min-width:max-content !important;}
 .st-key-ptabs [data-testid="stColumn"]:last-child {display:none;}
-[data-testid="stMain"] [class*="st-key-ptab_"] button[kind] {border-radius:999px; padding:.42rem 1rem; font-weight:500; background:#ffffff;
-    color:#475569; border:1px solid #dfe3ea; box-shadow:none; white-space:nowrap;}
+[data-testid="stMain"] [class*="st-key-ptab_"] button[kind] {border-radius:0; padding:.55rem .7rem; min-height:0; font-weight:500;
+    background:transparent; color:var(--muted); border:none; border-bottom:2px solid transparent; box-shadow:none; white-space:nowrap;}
 [data-testid="stMain"] [class*="st-key-ptab_"] button p {color:inherit; margin:0;}
-[data-testid="stMain"] [class*="st-key-ptab_"] button[kind="secondary"]:hover {border-color:#2563eb; color:#1d4ed8; background:#f0f5ff;}
-[data-testid="stMain"] [class*="st-key-ptab_"] button[kind="primary"] {background:#0f172a; color:#ffffff; border-color:#0f172a; font-weight:600;}
+[data-testid="stMain"] [class*="st-key-ptab_"] button[kind="secondary"]:hover {color:var(--ink); background:transparent;}
+[data-testid="stMain"] [class*="st-key-ptab_"] button[kind="primary"] {color:var(--ink); border-bottom-color:var(--accent); font-weight:600;}
 [data-testid="stMain"] [class*="st-key-polink_"] button[kind] {background:transparent; border:none; padding:0; min-height:0;
-    justify-content:flex-start; box-shadow:none; color:#1d4ed8; font-weight:600; white-space:nowrap;}
-[data-testid="stMain"] [class*="st-key-polink_"] button p {color:inherit; margin:0; text-align:left; font-size:.87rem;}
-[data-testid="stMain"] [class*="st-key-polink_"] button[kind]:hover {background:transparent; color:#1e40af;}
+    justify-content:flex-start; box-shadow:none; color:var(--accent); font-weight:500; white-space:nowrap;}
+[data-testid="stMain"] [class*="st-key-polink_"] button p {color:inherit; margin:0; text-align:left; font-size:.84rem;
+    font-variant-numeric:tabular-nums;}
+[data-testid="stMain"] [class*="st-key-polink_"] [data-testid="stMarkdownContainer"] {overflow:visible; text-overflow:clip;}
+[data-testid="stMain"] [class*="st-key-polink_"] button[kind]:hover {background:transparent; color:var(--accent-strong);}
 [data-testid="stMain"] [class*="st-key-polink_"] button[kind]:hover p {text-decoration:underline;}
 
 /* the order toggle never truncates its label */
@@ -725,14 +756,13 @@ hr {border-color:#e6e9ef; margin:1.4rem 0;}
 /* ---- Phones ------------------------------------------------------------ */
 @media (max-width: 640px) {
     .block-container, [data-testid="stMainBlockContainer"] {padding:3.8rem 1rem 3rem !important;}
-    [data-testid="stMain"] h2 {font-size:1.55rem;}
-    [data-testid="stMain"] h3 {font-size:1.02rem;}
+    [data-testid="stMain"] h2 {font-size:1.5rem;}
+    [data-testid="stMain"] h3 {font-size:1rem;}
     .stat-grid {grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px;}
     .stat-card {padding:14px 14px 12px;}
-    .stat-card .value {font-size:1.6rem;}
-    .stat-card .label {font-size:.64rem;}
+    .stat-card .value {font-size:1.55rem;}
+    .stat-card .label {font-size:.72rem;}
     .stat-card .foot {display:none;}
-    .lead {font-size:.88rem; padding:12px 14px;}
     [class*="st-key-card_"] {padding:14px 14px 16px;}
     .detail-head .ref {font-size:1.3rem;}
     /* filter / sort / order / count: filter on its own row, the rest side by side */
@@ -811,7 +841,7 @@ def case_list(statuses, key, empty_msg, show_reason=False):
         st.info(empty_msg)
         return
     rows = controls(key, rows, CASE_SORTS)
-    widths = [1.6, 2.0, 1.5, 1.5, 1.1, 0.8, 3.0 if show_reason else 1.8, 0.9]
+    widths = [1.35, 1.4, 1.15, 1.05, 0.8, 0.55, 1.55, 0.75]   # sized to content: IDs and amounts never wrap
     with st.container(key=f"tbl_{key}"):
         head_row(widths, ["Case", "Vendor", "Invoice", "PO/PR", "Amount", "Score", "Reason" if show_reason else "Status", ""])
         for r in rows:
@@ -844,37 +874,30 @@ st.header(PAGE_TITLES[page])
 # 6. PAGE: SUBMIT DOCUMENT (manual upload + email intake, both run Module 1 first)
 # =====================================================================================
 if page == "dashboard":
-    docs = annie.list_documents(con)
-    total = len(docs)
-    allocated = sum(1 for d in docs if (d.get("module2_outcome") or "") in ("ALLOCATED", "REGISTERED"))
+    total = len(annie.list_documents(con))
     tiles = [
-        ("Documents processed", total, "across all channels", "accent"),
-        ("Needs review", pending["review"], "waiting in Intake Review", "amber"),
-        ("Open cases", pending["s1"], "invoices & POs awaiting match", "blue"),
-        ("Pending GR/SES", pending["s2"], "awaiting goods receipt", "slate"),
-        ("Complete", pending["s3"], "fully matched & archived", "green"),
-        ("Call-offs", pending["calloff"], "open call-off agreements", "slate"),
+        ("Documents processed", total, "all channels"),
+        ("Needs review", pending["review"], "in Intake Review"),
+        ("Open", pending["s1"], "invoices to match, PO/PRs with balance"),
+        ("Pending GR/SES", pending["s2"], "awaiting goods or service receipt"),
+        ("Complete", pending["s3"], "received, ready to post"),
+        ("Call-offs", pending["calloff"], "awaiting a manual match"),
     ]
     cards = "".join(
-        f'<div class="stat-card {cls}"><div class="label">{lbl}</div>'
+        f'<div class="stat-card"><div class="label">{lbl}</div>'
         f'<div class="value">{val}</div><div class="foot">{foot}</div></div>'
-        for lbl, val, foot, cls in tiles
+        for lbl, val, foot in tiles
     )
-    st.markdown(
-        '<div class="lead">Annie ingests purchase orders and invoices, extracts and standardises their '
-        'fields, then runs <b>3-way matching</b> &mdash; flagging duplicates, overbilling and anything that '
-        'needs a human. Use <b>Submit Document</b> to add files, or watch the inbox monitor bring them in.</div>',
-        unsafe_allow_html=True)
+    st.caption("Purchase orders and invoices from intake through 3-way matching, goods receipt and posting.")
     st.markdown(f'<div class="stat-grid">{cards}</div>', unsafe_allow_html=True)
     if total == 0:
         st.info("No documents yet. Head to **Submit Document** to upload a PO or invoice, "
                 "or open **Controls** to reset or configure the inbox.")
 
 elif page == "submit":
-    st.markdown('<div class="lead">Every document goes through <b>Module 1</b> (duplicate check, extraction, field check) first. '
-                'Only documents with every mandatory field enter Annie; the rest wait in <b>Intake Review</b>. '
-                'PO/PRs and invoices can arrive in any order and in any number: invoices are allocated to PO/PR lines '
-                'as soon as the balances allow.</div>', unsafe_allow_html=True)
+    st.caption("Every document goes through Module 1 (duplicate check, extraction, field check) first. Only documents "
+               "with every mandatory field enter Annie; the rest wait in Intake Review. PO/PRs and invoices can arrive "
+               "in any order: invoices are allocated to PO/PR lines as soon as the balances allow.")
     up_col, mail_col = st.columns(2, gap="large")
     with up_col, st.container(key="card_upload"):
         st.subheader("Upload documents")
@@ -924,7 +947,7 @@ elif page == "review":
     for r in review:
         k = r["record_id"]
         received = str(r["received_at"] or "").replace("T", " ")[:16]
-        with st.expander(f"**{str(r['source_file']).replace('_', chr(92) + '_')}**  ·  {nice(r['m1_status'])}  ·  "
+        with st.expander(f"**{md(r['source_file'])}**  ·  {nice(r['m1_status'])}  ·  "
                          f"{nice(r['channel'])}  ·  {received}"):
             lcol, rcol = st.columns(2, gap="large")
             with lcol:
@@ -966,7 +989,7 @@ elif page == "processing":
             po = controls("s1b", po, ["po_reference", "vendor", "mode", "status", "ordered", "billed", "received", "open_to_bill", "date"])
             st.download_button("Download CSV", pd.DataFrame(po).drop(columns=["record_id"]).to_csv(index=False),
                                file_name="po_pr_open_balance.csv", mime="text/csv", key="po_csv")
-            widths = [1.5, 2.0, 1.7, 2.4, 1.1, 1.1, 1.1, 1.2, 1.2]
+            widths = [10.6, 8.7, 8.3, 15.2, 7.9, 7.9, 7.9, 8.3, 8.9]   # measured: references, status pill and dates need these widths
             fmt = lambda v: None if v is None else f"{v:,.2f}"
             with st.container(key="tbl_s1b"):
                 head_row(widths, ["PO/PR", "Vendor", "Type", "Status", "Ordered", "Billed", "Received", "Open to bill", "Date"])
@@ -1069,9 +1092,8 @@ elif page == "controls":
     admin_pin = setting("ADMIN_PIN") or ""
     with st.container(key="card_demo"):
         st.subheader("Demo data")
-        st.caption(f"Resets the database and runs the {len(list(SAMPLES.glob('*.pdf')))} sample documents through the real "
-                   "pipeline, so every stage has something to show. The app also does this by itself when it starts "
-                   "with an empty database.")
+        st.caption(f"Clears the database and processes the {len(list(SAMPLES.glob('*.pdf')))} sample documents, so every "
+                   "stage has example data. The app also does this on its own when it starts with an empty database.")
         if admin_pin:
             entered = st.text_input("Admin PIN", type="password", key="admin_pin_entry",
                                     placeholder="Needed to reset or reload the data")
@@ -1102,7 +1124,7 @@ elif page == "controls":
             st.caption("Last scan: " + ", ".join(f"{k} {v}" for k, v in mon["last"].items()))
         if mon["last_error"]:
             st.error("Last scan failed: " + mon["last_error"])
-        b1, b2, _ = st.columns([1, 1, 4])
+        b1, b2, _ = st.columns([1, 1, 2])
         if b1.button("Start", disabled=mon["running"] or not annie.email_config_status()["ok"]):
             annie.start_monitor()
             st.rerun()

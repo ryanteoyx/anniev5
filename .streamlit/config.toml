@@ -1,7 +1,8 @@
 [theme]
+# Same palette as the stylesheet in app.py (--accent, --canvas, --line-soft, --ink-2)
 base = "light"
 primaryColor = "#2563eb"
-backgroundColor = "#f6f7f9"
-secondaryBackgroundColor = "#ffffff"
-textColor = "#1a2233"
+backgroundColor = "#f8fafc"
+secondaryBackgroundColor = "#f1f5f9"
+textColor = "#334155"
 font = "sans serif"
