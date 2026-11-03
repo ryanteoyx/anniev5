@@ -9,7 +9,7 @@ and overbilling, and sends anything incomplete to a person for review.
 Extraction and matching are **rule based** (PDF text plus OCR, label patterns, similarity scores).
 There is no external AI service and no API key to manage.
 
-**Live demo:** https://annie-acct439.streamlit.app
+**Live demo:** https://anniev5-production.up.railway.app
 
 ## Documentation
 
@@ -58,33 +58,30 @@ python tests/sample_regression.py
 
 ## Deployment
 
-The live demo runs on **Streamlit Community Cloud** (free) from the `ui-polish` branch with Python
-3.11; `packages.txt` installs Tesseract and the OCR system libraries.
+The live demo runs on **Railway** (always on; paid after the trial credit) from the `ui-polish`
+branch. Railway detects the `Dockerfile`, which builds Python 3.11 with Tesseract and the OCR models
+included, and redeploys on every push.
 
-- Community Cloud puts apps to sleep after 12 hours without traffic. The
-  [Keep Streamlit app awake](.github/workflows/keep-awake.yml) GitHub Action opens the app in a
-  headless browser every 4 hours ([scripts/keep_awake.py](scripts/keep_awake.py)), presses the
-  wake-up button if needed, and fails (so GitHub emails you) if the app does not load. Update
-  `APP_URL` in the workflow if the address changes.
-- Community Cloud storage is not persistent: the database and uploaded files reset when the app
-  restarts. For data that must persist, see [deploy/](deploy/) (self-hosted VM).
+- **Settings in Railway:** Healthcheck Path `/_stcore/health`, restart policy *On Failure*, public
+  domain on port 8080 (Railway's `PORT`), and `ADMIN_PIN` under Variables.
+- **Storage:** there is no volume, so each redeploy starts a fresh database that loads the demo
+  documents on the first visit. Changes made during a demo last until the next deploy or restart.
+- **Same image locally:** `docker build -t annie . && docker run -p 8501:8501 annie`.
 
-**Railway (always on, paid after the trial credit):** the `Dockerfile` builds the same app with
-Tesseract and the OCR models included, and `railway.json` tells Railway to use it, check
-`/_stcore/health` and restart on failure. Connect the repo in Railway, pick the `ui-polish` branch, set
-`ADMIN_PIN` under Variables and generate a domain. Without a volume, each redeploy starts a fresh
-database that loads the demo documents on the first visit. The same image runs locally:
-`docker build -t annie . && docker run -p 8501:8501 annie`.
+**Earlier host:** Streamlit Community Cloud (`annie-acct439.streamlit.app`) still works but sleeps
+after 12 hours without visitors, and it no longer renders for headless browsers, so it can't be kept
+awake automatically. For a self-hosted VM where data persists, see [deploy/](deploy/).
 
 ## Demo mode
 
-- **Auto-load:** on Streamlit Community Cloud the app resets to the sample documents every time it
-  starts or is redeployed, so the demo always opens complete. Locally it only fills an empty
-  database. `DEMO_AUTOLOAD` overrides this: `reset`, `1` (empty database only) or `0` (off).
+- **Auto-load:** an empty database is filled with the sample documents on the first visit, so the
+  demo never opens blank (on Railway every deploy starts empty). On Streamlit Community Cloud the app
+  also resets to the samples whenever it starts. `DEMO_AUTOLOAD` overrides this: `reset`, `1` (empty
+  database only) or `0` (off).
 - **Controls → Demo data → Reset & load demo data** restores the starting state before a
   presentation; **Danger zone → Reset database (empty)** clears everything for live uploads.
-- Both need the **admin PIN**: `ADMIN_PIN = "..."` in the app's Settings → Secrets on Streamlit Cloud,
-  or `ADMIN_PIN=...` in `.env` locally. Without a PIN they stay locked. Visitors can still browse,
+- Both need the **admin PIN**: `ADMIN_PIN` under the service's Variables on Railway (Settings →
+  Secrets on Streamlit Cloud), or `ADMIN_PIN=...` in `.env` locally. Without a PIN they stay locked. Visitors can still browse,
   open cases and upload.
 
 ## Optional: email intake
@@ -115,6 +112,6 @@ The mailbox is opened read-only and mail is never marked as read.
 | `reference_samples/` | Optional reference documents and labels that tune classification |
 | `docs/` | Business logic and architecture documentation |
 | `tests/` | Rule tests and the sample-set regression check |
-| `scripts/`, `.github/workflows/` | Keep-awake check for the hosted demo |
+| `Dockerfile`, `.dockerignore` | Container build used by Railway (and anywhere Docker runs) |
 | `deploy/` | Optional self-hosted VM setup |
 | `annie_v4.db`, `storage/` | Created at runtime (git-ignored) |

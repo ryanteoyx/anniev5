@@ -35,7 +35,6 @@ flowchart LR
     CORE --> OCR[RapidOCR / Tesseract<br/>pdfplumber, PyMuPDF]
     MON[Inbox monitor thread] --> CORE
     MON <-- IMAP, read-only --> MAIL[Mailbox]
-    GH[GitHub Action<br/>keep-awake, every 4 h] -. headless browser .-> U
 ```
 
 * **Module 1 (intake):** file checks, duplicate detection, text extraction (with OCR), classification,
@@ -54,8 +53,7 @@ flowchart LR
 | `.streamlit/config.toml` | Theme colours (kept in step with the stylesheet tokens) |
 | `samples/` | 21 sample PO/PRs and invoices; the demo data set |
 | `reference_samples/` | Optional reference documents and `reference_labels.json` that tune classification and labels (created empty at start) |
-| `scripts/keep_awake.py` | Playwright check that opens the hosted app and wakes it if asleep |
-| `.github/workflows/keep-awake.yml` | Runs that check every 4 hours |
+| `Dockerfile`, `.dockerignore` | Container build used by Railway: Python 3.11, Tesseract, OCR models, Streamlit on `$PORT` |
 | `deploy/` | Optional self-hosted setup on a VM (systemd + Caddy), for when data must persist |
 | `tests/` | Rule tests and the sample-set regression check (see section 10) |
 | `docs/` | This document and the business-logic document |
@@ -222,8 +220,8 @@ dashboard cards go two per row and filter controls wrap.
 
 ## 8. Configuration
 
-Settings come from Streamlit secrets (on Community Cloud) or environment variables / a `.env` file
-(locally or on a VM). Root-level Streamlit secrets are also exposed as environment variables.
+Settings come from environment variables (Railway Variables, or a `.env` file locally or on a VM) or
+Streamlit secrets (on Community Cloud). Root-level Streamlit secrets are also exposed as environment variables.
 
 | Setting | Default | Purpose |
 |---|---|---|
@@ -239,21 +237,23 @@ Settings come from Streamlit secrets (on Community Cloud) or environment variabl
 
 ## 9. Deployment
 
-**Current: Streamlit Community Cloud** (free) at `annie-acct439.streamlit.app`, deployed from the
-`ui-polish` branch (the fork's default branch) with Python 3.11. `packages.txt` installs Tesseract and
-the OCR system libraries. Each push to the branch redeploys automatically.
+**Current: Railway** at `anniev5-production.up.railway.app` (always on; the trial credit covers 30
+days or $5, then the Hobby plan). The service deploys the `ui-polish` branch (the fork's default branch)
+and redeploys on every push. Railway detects the `Dockerfile` and builds it; config-as-code files are
+no longer read for new services, so the remaining settings live in the Railway dashboard:
 
-* **Sleep.** Community Cloud stops apps that get no traffic for 12 hours. The *Keep Streamlit app awake*
-  GitHub Action opens the app in headless Chromium every 4 hours, presses the wake-up button if the app
-  is asleep, and fails (GitHub emails the repo owner) with a screenshot if the app does not render. A
-  plain HTTP ping is not enough, because it never opens a Streamlit session. As a safeguard, each run
-  also calls GitHub's enable-workflow API, because GitHub pauses scheduled workflows in public
-  repositories after 60 days without activity (any push also resets that clock).
-* **Storage is not persistent.** The database and stored files reset when the container restarts. Demo
-  auto-load resets to the sample set whenever the app starts or is redeployed, so the demo never opens
-  blank or half-used. Changes visitors make last until the next restart, or until *Reset & load demo data*.
+* **Networking.** A generated `*.up.railway.app` domain routes to port 8080, the `PORT` Railway gives
+  the container; the Dockerfile starts Streamlit on `$PORT`.
+* **Health and restarts.** Healthcheck Path `/_stcore/health`; restart policy *On Failure*.
+* **Storage is not persistent** (no volume). Each deploy starts an empty database, which demo
+  auto-load fills with the sample set on the first visit. Changes visitors make last until the next
+  deploy or restart, or until *Reset & load demo data*.
 * **Access.** The app is public. Visitors can browse, open cases and upload; destructive admin actions
-  need the PIN.
+  need `ADMIN_PIN`, set under the service's Variables.
+
+**Earlier host: Streamlit Community Cloud** (`annie-acct439.streamlit.app`). It is free but sleeps
+after 12 hours without visitors, and since November 2026 it does not render for headless browsers, so
+the automated keep-awake job that used to visit it was removed.
 
 **Alternative: a self-hosted VM** (`deploy/`). `setup.sh` installs the app on Ubuntu 24.04 (for example
 an Oracle Cloud Always Free ARM VM) with a systemd service, Caddy for HTTPS on a free `sslip.io`
