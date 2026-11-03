@@ -4,6 +4,7 @@
 # 1. IMPORTS AND SETUP
 # =====================================================================================
 import base64
+import html
 import os
 from datetime import date
 from pathlib import Path
@@ -72,9 +73,12 @@ def summary(doc):
                      "Signed": "Yes" if p.get("signature_present") else "No"})
     else:
         rows["PO/PR cited on invoice"] = ", ".join(p.get("po_references") or [p.get("po_reference") or "-"])
-    st.table(pd.DataFrame({"Field": list(rows), "Value": [str(v) for v in rows.values()]}).set_index("Field"))
+    shown = [f"{v:,.2f}" if isinstance(v, (int, float)) and not isinstance(v, bool) else str(v).replace(" (None)", "")
+             for v in rows.values()]
+    shown = ["—" if s in ("None", "", "-") or s.startswith("None (") else s for s in shown]
+    st.table(pd.DataFrame({"Field": list(rows), "Value": shown}).set_index("Field"))
     if p.get("items"):
-        st.dataframe(pd.DataFrame(p["items"]), hide_index=True)
+        st.dataframe(pretty(pd.DataFrame(p["items"])), hide_index=True)
     elif p.get("service_description"):
         st.caption("Service: " + str(p["service_description"]))
 
@@ -89,10 +93,11 @@ def _sort_key(v):
 
 def controls(key, rows, sort_fields):
     """Filter box + sort selector + order toggle + 'x of y entries' counter. Returns the filtered, sorted rows."""
-    c1, c2, c3, c4 = st.columns([3, 2, 1.4, 2])
+    with st.container(key=f"ctl_{key}"):
+        c1, c2, c3, c4 = st.columns([3, 2, 1.4, 2], vertical_alignment="center")
     q = c1.text_input("Filter", key=f"flt_{key}", placeholder="🔎 Filter entries...", label_visibility="collapsed")
     field = c2.selectbox("Sort by", [DEFAULT_ORDER] + list(sort_fields), key=f"srt_{key}",
-                         label_visibility="collapsed", format_func=lambda f: f if f == DEFAULT_ORDER else f"Sort by: {f}")
+                         label_visibility="collapsed", format_func=lambda f: f if f == DEFAULT_ORDER else f"Sort by: {_label(f)}")
     desc = c3.toggle("Descending", key=f"dsc_{key}")
     out = list(rows)
     if q.strip():
@@ -110,6 +115,58 @@ def bubble(n):
     if not n:
         return ""
     return " " + (chr(0x2460 + n - 1) if n <= 20 else f"({n})")
+
+
+# --- Presentation-only helpers (pills, table cells, detail headers, column labels) ---
+PILL = {annie.S_OPEN_PO: "amber", annie.S_OPEN_INV: "blue", annie.S_PART: "blue", annie.S_BILLED: "green",
+        annie.S_CALLOFF: "blue", annie.S_CALLED: "green", annie.S_GR: "slate", annie.S_DONE: "green",
+        annie.S_ARCHIVED: "slate"}
+_UPPER = {"po", "pr", "po/pr", "id", "gr", "ses", "gr/ses"}
+
+
+def pill(text):
+    """A status as a coloured pill."""
+    return f'<span class="pill {PILL.get(text, "slate")}">{html.escape(str(text))}</span>'
+
+
+def cell(col, value, cls="", as_pill=False):
+    """One table cell as plain HTML text, so '-' or '1.' never turn into markdown list markers."""
+    if value in (None, "", "-"):
+        body = '<span class="muted">—</span>'
+    else:
+        body = pill(value) if as_pill else html.escape(str(value))
+    col.markdown(f'<div class="td {cls}">{body}</div>', unsafe_allow_html=True)
+
+
+def head_row(widths, labels):
+    for col, h in zip(st.columns(widths), labels):
+        col.markdown(f'<div class="th">{html.escape(h)}</div>', unsafe_allow_html=True)
+
+
+def page_head(title, status=None, meta=()):
+    """Detail-page header: the reference, a status pill and a muted label/value row."""
+    items = "".join(f'<span class="meta">{html.escape(k)} <b>{html.escape(str(v))}</b></span>'
+                    for k, v in meta if v not in (None, ""))
+    st.markdown(f'<div class="detail-head"><span class="ref">{html.escape(str(title))}</span>'
+                f'{pill(status) if status else ""}</div><div class="detail-meta">{items}</div>', unsafe_allow_html=True)
+
+
+def _label(c):
+    if c == "ts":
+        return "Time"
+    words = str(c).replace("po_pr", "po/pr").replace("gr_ses", "gr/ses").split("_")
+    out = " ".join(w.upper() if w.lower() in _UPPER else w for w in words)
+    return out[:1].upper() + out[1:]
+
+
+def pretty(df):
+    """Read-only tables: snake_case column names shown as readable labels."""
+    return df.rename(columns=_label)
+
+
+def nice(code):
+    """MACHINE_CODE -> 'Machine code' for display."""
+    return str(code or "").replace("_", " ").capitalize()
 
 
 def render_results(results):
@@ -199,7 +256,7 @@ def manual_panel(case_id):
             for e in chk["errors"]:
                 st.error(e)
             if chk["rows"]:
-                st.dataframe(pd.DataFrame(chk["rows"]).drop(columns=["po_line_id", "qty"]), hide_index=True)
+                st.dataframe(pretty(pd.DataFrame(chk["rows"]).drop(columns=["po_line_id", "qty"])), hide_index=True)
             if chk["ok"] and chk["below_threshold"]:
                 st.warning(f"Some choices score below the automatic threshold ({annie.LINK_THRESHOLD}) or the vendor name looks different. "
                            "You can still confirm, with a reason.")
@@ -251,24 +308,25 @@ def dismiss_panel(case_id):
 def po_page(record_id):
     """Preview of a PO/PR: the document, its line balances and the invoices charged to it."""
     d = annie.po_detail(con, record_id)
-    top = st.columns([1, 6])
-    if top[0].button("← Back"):
+    if st.button("← Back", key="back_po"):
         ss.view_po = None
         st.rerun()
     p = d["doc"]["payload"]
-    top[1].subheader(f"PO/PR {p.get('po_reference')}  |  {p.get('vendor_name')}  |  {d['lines'][0]['basis'] if d['lines'] else ''}")
-    left, right = st.columns(2, gap="large")
+    page_head(f"PO/PR {p.get('po_reference')}", None,
+              [("Vendor", p.get("vendor_name")), ("Basis", d["lines"][0]["basis"] if d["lines"] else None)])
+    with st.container(key="detail_cols"):
+        left, right = st.columns(2, gap="large")
     with left:
         summary(d["doc"])
         file_view(d["doc"], key="po_preview")
     with right:
         st.markdown("#### Lines and balances")
         if d["lines"] and d["lines"][0]["basis"].startswith("Services (single"):
-            st.info("")
-        st.dataframe(pd.DataFrame(d["lines"]), hide_index=True)
+            st.info("Single-invoice service: this PO/PR expects one invoice only.")
+        st.dataframe(pretty(pd.DataFrame(d["lines"])), hide_index=True)
         st.markdown("#### Invoices charged to this PO/PR")
         if d["invoices"]:
-            st.dataframe(pd.DataFrame(d["invoices"]), hide_index=True)
+            st.dataframe(pretty(pd.DataFrame(d["invoices"])), hide_index=True)
         else:
             st.caption("None yet.")
 
@@ -333,11 +391,10 @@ def calloff_page(case_id):
     d = annie.calloff_detail(con, case_id)
     c, po = d["case"], d["po"]
     pp = po["payload"]
-    top = st.columns([1, 6])
-    if top[0].button("← Back to cases"):
+    if st.button("← Back to cases", key="back_calloff"):
         ss.view_case = None
         st.rerun()
-    top[1].subheader(f"{case_id}  |  {c['status']}  |  PO/PR {pp.get('po_reference')}  |  {pp.get('vendor_name')}")
+    page_head(case_id, c["status"], [("PO/PR", pp.get("po_reference")), ("Vendor", pp.get("vendor_name"))])
     for m in ss.pop("flash", []):
         st.success(m)
     is_open = c["status"] == annie.S_CALLOFF
@@ -349,7 +406,8 @@ def calloff_page(case_id):
             ss[f"co_inv_{case_id}_{i}"] = None
     chosen = [ss.get(f"co_inv_{case_id}_{i}") for i in range(n)]
     chosen = [x for x in chosen if x]
-    left, right = st.columns(2, gap="large")
+    with st.container(key="detail_cols"):
+        left, right = st.columns(2, gap="large")
     with left:
         st.markdown("#### Source documents")
         if is_open:
@@ -373,7 +431,7 @@ def calloff_page(case_id):
             for i in range(n):
                 st.selectbox(f"Invoice {i + 1}", [None] + list(by_id), key=f"co_inv_{case_id}_{i}",
                              format_func=lambda v: "Select an open invoice..." if v is None else by_id[v]["label"])
-            b1, b2, _ = st.columns([1.3, 1.3, 3])
+            b1, b2, _ = st.columns([1.7, 1.7, 2.2])
             b1.button("+ Add Invoice", key=f"co_add_{case_id}", on_click=_add_inv, args=(case_id,))
             if n > 1:
                 b2.button("Remove last", key=f"co_drop_{case_id}", on_click=_drop_inv, args=(case_id,))
@@ -395,8 +453,8 @@ def calloff_page(case_id):
         else:
             st.success({annie.S_GR: "Matched - pending GR/SES.", annie.S_DONE: "Matched and received - complete.",
                         annie.S_ARCHIVED: "Matched and received - posted to the Complete Archive."}.get(c["status"], ""))
-            st.dataframe(pd.DataFrame([dict(case=i["case_id"], invoice=i["doc"]["payload"].get("invoice_reference"),
-                                            date=i["doc"]["payload"].get("date"), total=annie.doc_total(i["doc"]["payload"])) for i in d["invoices"]]),
+            st.dataframe(pretty(pd.DataFrame([dict(case=i["case_id"], invoice=i["doc"]["payload"].get("invoice_reference"),
+                                                   date=i["doc"]["payload"].get("date"), total=annie.doc_total(i["doc"]["payload"])) for i in d["invoices"]])),
                          hide_index=True)
             st.caption("Reason: " + (c["reason"] or "-"))
             if c["status"] == annie.S_GR:
@@ -422,14 +480,17 @@ def case_page(case_id):
     c = con.execute("SELECT * FROM cases WHERE case_id=?", (case_id,)).fetchone()
     inv, pos = annie.get_doc(con, c["inv_record_id"]), annie.case_po_docs(con, case_id)
     lines, grs = annie.case_lines(con, case_id), annie.case_gr_docs(con, case_id)
-    top = st.columns([1, 6])
-    if top[0].button("← Back to cases"):
+    if st.button("← Back to cases", key="back_case"):
         ss.view_case = None
         st.rerun()
-    top[1].subheader(f"{case_id}  |  {c['status']}  |  invoice {inv['payload'].get('invoice_reference')}  |  link score {c['link_score'] or '-'}")
+    score = c["link_score"]
+    page_head(case_id, c["status"], [("Invoice", inv["payload"].get("invoice_reference")),
+                                     ("Vendor", inv["payload"].get("vendor_name")),
+                                     ("Link score", f"{score:.2f}" if isinstance(score, (int, float)) else None)])
     for m in ss.pop("flash", []):
         st.success(m)
-    left, right = st.columns(2, gap="large")
+    with st.container(key="detail_cols"):
+        left, right = st.columns(2, gap="large")
     with left:
         st.markdown("#### Source documents")
         tabs_ = st.tabs(["Invoice"] + [f"PO/PR {d['payload'].get('po_reference')}" for d in pos])
@@ -440,10 +501,11 @@ def case_page(case_id):
     with right:
         st.markdown("#### Allocation and receipts")
         if lines:
-            st.dataframe(pd.DataFrame([dict(po_pr=l["po_reference"], item=l["description"], basis=BASIS_LABEL[l["basis"]],
-                                            ordered=l["ordered"], billed_this_invoice=l["billed_this"],
-                                            received_for_this_invoice=l["received"], still_to_receive=l["needed"],
-                                            matched=("manual: " + (l["a_reason"] or "")) if l["manual"] else "automatic") for l in lines]), hide_index=True)
+            st.dataframe(pretty(pd.DataFrame([dict(po_pr=l["po_reference"], item=l["description"], basis=BASIS_LABEL[l["basis"]],
+                                                   ordered=l["ordered"], billed_this_invoice=l["billed_this"],
+                                                   received_for_this_invoice=l["received"], still_to_receive=l["needed"],
+                                                   matched=("manual: " + (l["a_reason"] or "")) if l["manual"] else "automatic") for l in lines])),
+                         hide_index=True)
         if c["status"] == annie.S_OPEN_PO:
             st.warning("Not allocated yet: " + (c["reason"] or "waiting for a matching PO/PR"))
             if st.button("Retry automatic allocation"):
@@ -494,31 +556,77 @@ st.markdown("""
 /* ---- Base typography & canvas ---------------------------------------- */
 html, body, [class*="st-"], .stMarkdown, button, input, textarea, select {
     font-family:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;}
+/* Streamlit draws icons from ligatures in its own icon font - never override it */
+[data-testid="stIconMaterial"], .material-symbols-rounded {font-family:'Material Symbols Rounded' !important;}
 .stApp {background:#f6f7f9;}
-.block-container {max-width:1240px; padding-top:2.2rem; padding-bottom:4rem;}
-[data-testid="stToolbar"], [data-testid="stDecoration"], footer, #MainMenu {visibility:hidden; height:0;}
+.block-container, [data-testid="stMainBlockContainer"] {max-width:1280px; padding-top:2.6rem; padding-bottom:4rem;}
+/* hide Streamlit's Deploy/menu chrome and heading anchors, but keep the sidebar open/close button usable */
+[data-testid="stToolbarActions"], [data-testid="stAppDeployButton"], [data-testid="stDecoration"], [data-testid="stMainMenu"],
+[data-testid="stHeaderActionElements"], footer, #MainMenu {display:none !important;}
+[data-testid="stHeader"] {background:rgba(246,247,249,.86); backdrop-filter:blur(8px);}
+[data-testid="stExpandSidebarButton"] {background:#16233a; color:#ffffff; border-radius:10px; width:40px; height:40px;
+    box-shadow:0 2px 8px rgba(16,24,40,.18);}
+[data-testid="stExpandSidebarButton"] svg, [data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"] {fill:#ffffff; color:#ffffff !important;}
+[data-testid="stExpandSidebarButton"]:hover {background:#223454;}
 
-/* ---- Headings -------------------------------------------------------- */
-.main h1, .main h2 {color:#0f172a; font-weight:700; letter-spacing:-.02em;}
-.main h2 {font-size:1.9rem; margin-bottom:.2rem;}
-.main h3 {color:#1e293b; font-weight:600; letter-spacing:-.01em; font-size:1.15rem; margin-top:.4rem;}
-.main h4 {color:#334155; font-weight:600; font-size:.95rem; text-transform:uppercase; letter-spacing:.04em;}
+/* ---- Headings (Streamlit >= 1.4x: the main area is [data-testid="stMain"], not .main) ---- */
+[data-testid="stMain"] h1, [data-testid="stMain"] h2 {color:#0f172a; font-weight:700; letter-spacing:-.02em;}
+[data-testid="stMain"] h2 {font-size:1.9rem; margin-bottom:.2rem;}
+[data-testid="stMain"] h3 {color:#1e293b; font-weight:600; letter-spacing:-.01em; font-size:1.12rem; padding:.2rem 0 .3rem;}
+[data-testid="stMain"] h4 {color:#475569; font-weight:600; font-size:.78rem; text-transform:uppercase; letter-spacing:.05em; padding:.6rem 0 .2rem;}
 hr {border-color:#e6e9ef; margin:1.4rem 0;}
+[data-testid="stCaptionContainer"] {color:#64748b;}
 
 /* ---- Buttons --------------------------------------------------------- */
-.main .stButton button[kind="primary"] {background:#2563eb; border:1px solid #2563eb; border-radius:8px;
+[data-testid="stMain"] button[kind="primary"] {background:#2563eb; border:1px solid #2563eb; border-radius:8px;
     font-weight:600; box-shadow:0 1px 2px rgba(37,99,235,.25);}
-.main .stButton button[kind="primary"]:hover {background:#1d4ed8; border-color:#1d4ed8;}
-.main .stButton button[kind="secondary"] {border-radius:8px; border:1px solid #d6dbe4; color:#334155; font-weight:500;}
-.main .stButton button[kind="secondary"]:hover {border-color:#2563eb; color:#1d4ed8; background:#f0f5ff;}
+[data-testid="stMain"] button[kind="primary"]:hover {background:#1d4ed8; border-color:#1d4ed8;}
+[data-testid="stMain"] button[kind="secondary"] {border-radius:8px; border:1px solid #d6dbe4; color:#334155; font-weight:500; background:#ffffff;}
+[data-testid="stMain"] button[kind="secondary"]:hover {border-color:#2563eb; color:#1d4ed8; background:#f0f5ff;}
+[data-testid="stMain"] button[kind] p {white-space:nowrap;}
 
 /* ---- Inputs ---------------------------------------------------------- */
-[data-testid="stFileUploaderDropzone"] {background:#fbfcfe; border:1.5px dashed #c6cedb; border-radius:12px;}
-.main [data-baseweb="select"] > div, .main .stTextInput input, .main .stNumberInput input {border-radius:8px;}
+[data-testid="stFileUploaderDropzone"] {background:#fbfcfe; border:1.5px dashed #c6cedb; border-radius:12px; padding:1.3rem;}
+[data-testid="stMain"] [data-baseweb="select"] > div, [data-testid="stMain"] [data-baseweb="input"],
+[data-testid="stMain"] [data-baseweb="base-input"] {border-radius:8px;}
 
-/* ---- Alerts / dataframe ---------------------------------------------- */
+/* ---- Alerts / dataframes / expanders / cards ------------------------- */
 [data-testid="stAlert"] {border-radius:10px;}
-[data-testid="stDataFrame"] {border:1px solid #e6e9ef; border-radius:12px; overflow:hidden;}
+[data-testid="stDataFrame"], [data-testid="stTable"] {border:1px solid #e6e9ef; border-radius:12px; overflow:hidden; background:#ffffff;}
+[data-testid="stExpander"] details {background:#ffffff; border:1px solid #e6e9ef; border-radius:12px;}
+[data-testid="stExpander"] summary:hover {color:#1d4ed8;}
+[class*="st-key-card_"] {background:#ffffff; border:1px solid #e6e9ef; border-radius:14px; padding:18px 22px 20px;
+    box-shadow:0 1px 2px rgba(16,24,40,.04);}
+.st-key-card_danger {border-color:#f5c2c2; background:#fffafa;}
+[data-testid="stMain"] .st-key-card_danger h3 {color:#b42318;}
+[data-testid="stMain"] .st-key-reset_db button[kind] {background:#dc2626; border-color:#dc2626; color:#ffffff;}
+[data-testid="stMain"] .st-key-reset_db button[kind]:hover {background:#b91c1c; border-color:#b91c1c; color:#ffffff;}
+
+/* ---- Row tables (case lists, PO/PR balances, call-offs, archive) ------
+   Header and rows scroll sideways together on narrow screens instead of collapsing into a column. */
+[class*="st-key-tbl_"] {background:#ffffff; border:1px solid #e6e9ef; border-radius:12px; padding:2px 16px 4px;
+    gap:0 !important; overflow-x:auto;}
+[class*="st-key-tbl_"] [data-testid="stHorizontalBlock"] {flex-wrap:nowrap !important; min-width:1040px; align-items:center;
+    gap:14px; padding:10px 0; border-top:1px solid #eef1f5;}
+[class*="st-key-tbl_"] [data-testid="stHorizontalBlock"]:has(.th) {border-top:none; padding:12px 0 8px;}
+[class*="st-key-tbl_"] [data-testid="stHorizontalBlock"]:not(:has(.th)):hover {background:#f8fafc;}
+[class*="st-key-tbl_"] [data-testid="stColumn"] {min-width:0 !important;}
+.th {color:#64748b; font-size:.7rem; font-weight:600; text-transform:uppercase; letter-spacing:.05em;}
+.td {color:#1e293b; font-size:.87rem; line-height:1.4;}
+.td.id, .td.num {white-space:nowrap; font-variant-numeric:tabular-nums;}
+.td.id, .td.refs {font-size:.84rem;}
+.td.refs {font-variant-numeric:tabular-nums;}   /* may hold several PO/PRs, so it wraps */
+.td.num {text-align:right;}
+.td.reason {color:#475569; font-size:.83rem;}
+.td .muted {color:#94a3b8;}
+[data-testid="stMain"] [class*="st-key-tbl_"] button[kind] {white-space:nowrap; padding:.2rem .9rem; min-height:2rem; font-size:.84rem;}
+
+/* ---- Detail page header (case / PO/PR / call-off) --------------------- */
+.detail-head {display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px; margin:.6rem 0 .25rem;}
+.detail-head .ref {font-size:1.65rem; font-weight:700; color:#0f172a; letter-spacing:-.02em;}
+.detail-head .pill {font-size:.8rem; padding:3px 12px;}
+.detail-meta {display:flex; flex-wrap:wrap; gap:4px 20px; color:#64748b; font-size:.88rem; margin-bottom:1rem;}
+.detail-meta b {color:#1e293b; font-weight:600;}
 
 /* ---- Dashboard stat cards ------------------------------------------- */
 .stat-grid {display:grid; grid-template-columns:repeat(auto-fit, minmax(176px, 1fr)); gap:16px; margin:.4rem 0 1.4rem 0;}
@@ -534,7 +642,7 @@ hr {border-color:#e6e9ef; margin:1.4rem 0;}
 .stat-card.slate {border-top:3px solid #64748b;}
 
 /* ---- Status pills ---------------------------------------------------- */
-.pill {display:inline-block; padding:2px 10px; border-radius:999px; font-size:.75rem; font-weight:600; line-height:1.5;}
+.pill {display:inline-block; padding:2px 10px; border-radius:999px; font-size:.74rem; font-weight:600; line-height:1.5; white-space:nowrap;}
 .pill.green {background:#e7f6ec; color:#157347;}
 .pill.amber {background:#fdf3e2; color:#b7791f;}
 .pill.red {background:#fdeaea; color:#c0392b;}
@@ -548,6 +656,7 @@ hr {border-color:#e6e9ef; margin:1.4rem 0;}
 /* ---- Sidebar (kept, lightly refined) -------------------------------- */
 [data-testid="stSidebar"] {background:#16233a;}
 [data-testid="stSidebar"] h3 {color:#ffffff; letter-spacing:.6px; padding:.2rem .4rem 1rem .4rem; font-weight:700;}
+[class*="st-key-side_"], [class*="st-key-side_"] [data-testid="stButton"] {width:100% !important;}
 [class*="st-key-side_"] button {width:100%; justify-content:flex-start; text-align:left; border-radius:8px; padding:.6rem 1rem;
     margin:0 0 3px 0; font-weight:500; background:transparent; color:#c9d4e3; border:1px solid transparent; box-shadow:none;}
 [class*="st-key-side_"] button p {color:inherit; margin:0; width:100%; text-align:left;}
@@ -555,16 +664,48 @@ hr {border-color:#e6e9ef; margin:1.4rem 0;}
 [class*="st-key-side_"] button[kind="primary"] {background:#0c1626; color:#ffffff; border:1px solid #060d18;
     border-left:4px solid #4da3ff; box-shadow:inset 0 3px 8px rgba(0,0,0,.6);}
 [class*="st-key-side_"] button[kind="primary"]:hover {background:#0c1626; color:#ffffff; border-color:#060d18; border-left-color:#4da3ff;}
-[class*="st-key-ptab_"] button {width:100%; border-radius:8px; padding:.6rem .8rem; font-weight:500; background:#f1f4f8;
-    color:#33445c; border:1px solid #c5cfdc; box-shadow:0 1px 0 #ffffff inset, 0 1px 2px rgba(0,0,0,.08);}
-[class*="st-key-ptab_"] button p {color:inherit; margin:0;}
-[class*="st-key-ptab_"] button[kind="secondary"]:hover {background:#e6ecf4; border-color:#9fb1c8; color:#1b2a41;}
-[class*="st-key-ptab_"] button[kind="primary"] {background:#dbe6f5; color:#0b2a55; border:1px solid #8fa8c8;
-    border-bottom:3px solid #1f6feb; font-weight:700; box-shadow:inset 0 2px 5px rgba(0,0,0,.18);}
-[class*="st-key-ptab_"] button[kind="primary"]:hover {background:#dbe6f5; color:#0b2a55; border-color:#8fa8c8; border-bottom-color:#1f6feb;}
-[class*="st-key-polink_"] button {background:transparent; border:none; padding:0; min-height:0; justify-content:flex-start; box-shadow:none; color:#1556c0;}
-[class*="st-key-polink_"] button p {color:inherit; margin:0; text-align:left; text-decoration:underline;}
-[class*="st-key-polink_"] button:hover {background:transparent; color:#0b3a8a;}
+/* Processing stages: a segmented pill row that scrolls sideways on phones */
+.st-key-ptabs [data-testid="stHorizontalBlock"] {flex-wrap:nowrap !important; overflow-x:auto; gap:8px; padding-bottom:2px;}
+.st-key-ptabs [data-testid="stColumn"] {flex:0 0 auto !important; width:auto !important; min-width:max-content !important;}
+.st-key-ptabs [data-testid="stColumn"]:last-child {display:none;}
+[data-testid="stMain"] [class*="st-key-ptab_"] button[kind] {border-radius:999px; padding:.42rem 1rem; font-weight:500; background:#ffffff;
+    color:#475569; border:1px solid #dfe3ea; box-shadow:none; white-space:nowrap;}
+[data-testid="stMain"] [class*="st-key-ptab_"] button p {color:inherit; margin:0;}
+[data-testid="stMain"] [class*="st-key-ptab_"] button[kind="secondary"]:hover {border-color:#2563eb; color:#1d4ed8; background:#f0f5ff;}
+[data-testid="stMain"] [class*="st-key-ptab_"] button[kind="primary"] {background:#0f172a; color:#ffffff; border-color:#0f172a; font-weight:600;}
+[data-testid="stMain"] [class*="st-key-polink_"] button[kind] {background:transparent; border:none; padding:0; min-height:0;
+    justify-content:flex-start; box-shadow:none; color:#1d4ed8; font-weight:600; white-space:nowrap;}
+[data-testid="stMain"] [class*="st-key-polink_"] button p {color:inherit; margin:0; text-align:left; font-size:.87rem;}
+[data-testid="stMain"] [class*="st-key-polink_"] button[kind]:hover {background:transparent; color:#1e40af;}
+[data-testid="stMain"] [class*="st-key-polink_"] button[kind]:hover p {text-decoration:underline;}
+
+/* the order toggle never truncates its label */
+[class*="st-key-ctl_"] [data-testid="stColumn"]:nth-child(3) {flex:0 0 auto !important; min-width:max-content !important;}
+
+/* ---- Tablets: detail pages stack the document above the allocation panel ---- */
+@media (max-width: 1024px) {
+    .st-key-detail_cols [data-testid="stHorizontalBlock"] {flex-wrap:wrap !important;}
+    .st-key-detail_cols [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {flex:1 1 100% !important; min-width:100% !important;}
+}
+
+/* ---- Phones ------------------------------------------------------------ */
+@media (max-width: 640px) {
+    .block-container, [data-testid="stMainBlockContainer"] {padding:3.8rem 1rem 3rem !important;}
+    [data-testid="stMain"] h2 {font-size:1.55rem;}
+    [data-testid="stMain"] h3 {font-size:1.02rem;}
+    .stat-grid {grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px;}
+    .stat-card {padding:14px 14px 12px;}
+    .stat-card .value {font-size:1.6rem;}
+    .stat-card .label {font-size:.64rem;}
+    .stat-card .foot {display:none;}
+    .lead {font-size:.88rem; padding:12px 14px;}
+    [class*="st-key-card_"] {padding:14px 14px 16px;}
+    .detail-head .ref {font-size:1.3rem;}
+    /* filter / sort / order / count: filter on its own row, the rest side by side */
+    [class*="st-key-ctl_"] [data-testid="stHorizontalBlock"] {flex-wrap:wrap !important; gap:8px 12px;}
+    [class*="st-key-ctl_"] [data-testid="stColumn"] {flex:1 1 calc(50% - 12px) !important; min-width:calc(50% - 12px) !important;}
+    [class*="st-key-ctl_"] [data-testid="stColumn"]:first-child {flex-basis:100% !important; min-width:100% !important;}
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -591,15 +732,27 @@ with st.sidebar:
         st.button(label + bubble(side_badge.get(key, 0)), key=f"side_{key}", type="primary" if ss.side == key else "secondary",
                   on_click=go_side, args=(key,))
     monitor_watch()
+    # On phones the sidebar is an overlay drawer: close it once a page is picked (display only).
+    st.html("""<script>
+    if (!document.__annieNavClose) {
+      document.__annieNavClose = true;
+      document.addEventListener("click", (e) => {
+        if (!window.matchMedia("(max-width: 768px)").matches) return;
+        if (!e.target.closest('[class*="st-key-side_"] button')) return;
+        setTimeout(() => document.querySelector('[data-testid="stSidebarCollapseButton"] button')?.click(), 120);
+      }, true);
+    }
+    </script>""", unsafe_allow_javascript=True)
 page = ss.side
 
 
 def processing_tabs():
     """Stage 1-3 as a row of rectangular tab buttons with pending-count bubbles."""
-    cols = st.columns([1.5, 1.75, 1.5, 1.1, 5.4])
-    for col, (key, label) in zip(cols, PTABS):
-        col.button(label + bubble(pending[key]), key=f"ptab_{key}", type="primary" if ss.ptab == key else "secondary",
-                   on_click=set_ptab, args=(key,))
+    with st.container(key="ptabs"):
+        cols = st.columns([1.5, 1.75, 1.5, 1.1, 5.4])
+        for col, (key, label) in zip(cols, PTABS):
+            col.button(label + bubble(pending[key]), key=f"ptab_{key}", type="primary" if ss.ptab == key else "secondary",
+                       on_click=set_ptab, args=(key,))
     st.write("")
     return ss.ptab
 
@@ -624,19 +777,25 @@ def case_list(statuses, key, empty_msg, show_reason=False):
         st.info(empty_msg)
         return
     rows = controls(key, rows, CASE_SORTS)
-    widths = [1.3, 2.0, 1.6, 2.0, 1.2, 0.9, 3.0, 0.9]
-    for col, h in zip(st.columns(widths), ["Case", "Vendor", "Invoice", "PO/PR", "Amount", "Score", "Reason" if show_reason else "Status", ""]):
-        col.markdown(f"**{h}**")
-    for r in rows:
-        cols = st.columns(widths)
-        vals = [r["case_id"], r["vendor"], r["invoice_reference"], r["po_references"] or "-",
-                f"{r['amount']:,.2f}" if r["amount"] is not None else "-", r["link_score"] or "-",
-                (r["reason"] or r["status"]) if show_reason else r["status"]]
-        for col, v in zip(cols, vals):
-            col.write(v)
-        if cols[7].button("Open", key=f"{key}_{r['case_id']}"):
-            ss.view_case = r["case_id"]
-            st.rerun()
+    widths = [1.6, 2.0, 1.5, 1.5, 1.1, 0.8, 3.0 if show_reason else 1.8, 0.9]
+    with st.container(key=f"tbl_{key}"):
+        head_row(widths, ["Case", "Vendor", "Invoice", "PO/PR", "Amount", "Score", "Reason" if show_reason else "Status", ""])
+        for r in rows:
+            cols = st.columns(widths)
+            score = r["link_score"]
+            cell(cols[0], r["case_id"], "id")
+            cell(cols[1], r["vendor"])
+            cell(cols[2], r["invoice_reference"], "id")
+            cell(cols[3], r["po_references"], "refs")
+            cell(cols[4], f"{r['amount']:,.2f}" if r["amount"] is not None else None, "num")
+            cell(cols[5], f"{score:.2f}" if isinstance(score, (int, float)) else score, "num")
+            if show_reason:
+                cell(cols[6], r["reason"] or r["status"], "reason")
+            else:
+                cell(cols[6], r["status"], as_pill=True)
+            if cols[7].button("Open", key=f"{key}_{r['case_id']}"):
+                ss.view_case = r["case_id"]
+                st.rerun()
 
 
 # =====================================================================================
@@ -678,12 +837,13 @@ if page == "dashboard":
                 "or open **Controls** to reset or configure the inbox.")
 
 elif page == "submit":
-    st.markdown("Every document goes through **Module 1** (duplicate check, extraction, field check) first. "
-                "Only documents with every mandatory field (`READY_FOR_MODULE_2`) enter Annie; the rest wait in **Intake Review**. "
-                "PO/PRs and invoices can arrive in any order and in any number: invoices are allocated to PO/PR lines as soon as the balances allow.")
+    st.markdown('<div class="lead">Every document goes through <b>Module 1</b> (duplicate check, extraction, field check) first. '
+                'Only documents with every mandatory field enter Annie; the rest wait in <b>Intake Review</b>. '
+                'PO/PRs and invoices can arrive in any order and in any number: invoices are allocated to PO/PR lines '
+                'as soon as the balances allow.</div>', unsafe_allow_html=True)
     up_col, mail_col = st.columns(2, gap="large")
-    with up_col:
-        st.subheader("A. Upload documents")
+    with up_col, st.container(key="card_upload"):
+        st.subheader("Upload documents")
         files = st.file_uploader("PDF, image, DOCX, TXT, CSV or XLSX", type=UPLOAD_TYPES, accept_multiple_files=True)
         if st.button("Run Module 1 and route", type="primary") and files:
             with st.spinner("Running Module 1..."):
@@ -693,8 +853,8 @@ elif page == "submit":
                     except Exception as e:
                         st.error(f"{f.name}: {e}")
             st.rerun()
-    with mail_col:
-        st.subheader("B. Email inbox")
+    with mail_col, st.container(key="card_email"):
+        st.subheader("Email inbox")
         em = annie.email_config_status()
         if em["ok"]:
             mon = annie.monitor_status()
@@ -702,7 +862,7 @@ elif page == "submit":
             st.caption(f"Automatic fetch: {'ON, every ' + str(mon['poll_seconds']) + ' s' if mon['running'] else 'OFF'}"
                        + (f" | last scan {mon['last_run']}" if mon["last_run"] else "") + " (change on the Controls page).")
         else:
-            st.warning("Add " + ", ".join(em["missing"]) + " to the `.env` file (see `.env.example`), then restart the app.")
+            st.info("Not connected yet. Add " + ", ".join(em["missing"]) + " to the `.env` file (see `.env.example`), then restart the app.")
         if st.button("Check inbox now", disabled=not em["ok"]):
             with st.spinner("Reading the inbox..."):
                 try:
@@ -729,7 +889,9 @@ elif page == "review":
         review = controls("review", review, ["source_file", "m1_status", "channel", "received_at"])
     for r in review:
         k = r["record_id"]
-        with st.expander(f"{r['source_file']} - {r['m1_status']} - {r['channel']} - {r['received_at']}"):
+        received = str(r["received_at"] or "").replace("T", " ")[:16]
+        with st.expander(f"**{str(r['source_file']).replace('_', chr(92) + '_')}**  ·  {nice(r['m1_status'])}  ·  "
+                         f"{nice(r['channel'])}  ·  {received}"):
             lcol, rcol = st.columns(2, gap="large")
             with lcol:
                 file_view(r, height=520, key=f"rev_{k}")
@@ -770,19 +932,21 @@ elif page == "processing":
             po = controls("s1b", po, ["po_reference", "vendor", "mode", "status", "ordered", "billed", "received", "open_to_bill", "date"])
             st.download_button("Download CSV", pd.DataFrame(po).drop(columns=["record_id"]).to_csv(index=False),
                                file_name="po_pr_open_balance.csv", mime="text/csv", key="po_csv")
-            widths = [1.5, 2.2, 2.0, 1.8, 1.0, 1.0, 1.0, 1.1, 1.2]
-            heads = ["PO/PR (click to preview)", "Vendor", "Type", "Status", "Ordered", "Billed", "Received", "Open to bill", "Date"]
-            for col, h in zip(st.columns(widths), heads):
-                col.markdown(f"**{h}**")
-            fmt = lambda v: "-" if v is None else f"{v:,.2f}"
-            for r in po:
-                cols = st.columns(widths)
-                if cols[0].button(str(r["po_reference"]), key=f"polink_{r['record_id']}"):
-                    ss.view_po = r["record_id"]
-                    st.rerun()
-                for col, v in zip(cols[1:], [r["vendor"], r["mode"], r["status"], fmt(r["ordered"]), fmt(r["billed"]),
-                                             fmt(r["received"]), fmt(r["open_to_bill"]), r["date"]]):
-                    col.write(v)
+            widths = [1.5, 2.0, 1.7, 2.4, 1.1, 1.1, 1.1, 1.2, 1.2]
+            fmt = lambda v: None if v is None else f"{v:,.2f}"
+            with st.container(key="tbl_s1b"):
+                head_row(widths, ["PO/PR", "Vendor", "Type", "Status", "Ordered", "Billed", "Received", "Open to bill", "Date"])
+                for r in po:
+                    cols = st.columns(widths)
+                    if cols[0].button(str(r["po_reference"]), key=f"polink_{r['record_id']}"):
+                        ss.view_po = r["record_id"]
+                        st.rerun()
+                    cell(cols[1], r["vendor"])
+                    cell(cols[2], r["mode"])
+                    cell(cols[3], r["status"], as_pill=True)
+                    for col, v in zip(cols[4:8], [r["ordered"], r["billed"], r["received"], r["open_to_bill"]]):
+                        cell(col, fmt(v), "num")
+                    cell(cols[8], r["date"], "id")
 
     elif ptab == "s2":
         st.caption("Invoice is allocated to PO/PR line(s), or a Call-Off case is matched, but receipts do not yet cover it. Open a case to record a GR/SES batch.")
@@ -800,16 +964,20 @@ elif page == "processing":
             st.info("No Call-Off PO/PR waiting.")
         else:
             rows = controls("calloffs", rows, ["case_id", "po_references", "vendor", "type", "date", "status"])
-            widths = [1.4, 1.7, 2.6, 1.1, 1.3, 1.8, 0.9]
-            for col, h in zip(st.columns(widths), ["Case", "PO/PR", "Vendor", "Type", "PO date", "Status", ""]):
-                col.markdown(f"**{h}**")
-            for r in rows:
-                cols = st.columns(widths)
-                for col, v in zip(cols, [r["case_id"], r["po_references"], r["vendor"], r["type"], r["date"], r["status"]]):
-                    col.write(v)
-                if cols[6].button("Open", key=f"co_open_{r['case_id']}"):
-                    ss.view_case = r["case_id"]
-                    st.rerun()
+            widths = [1.5, 1.6, 2.4, 1.1, 1.3, 1.9, 0.9]
+            with st.container(key="tbl_calloffs"):
+                head_row(widths, ["Case", "PO/PR", "Vendor", "Type", "PO date", "Status", ""])
+                for r in rows:
+                    cols = st.columns(widths)
+                    cell(cols[0], r["case_id"], "id")
+                    cell(cols[1], r["po_references"], "refs")
+                    cell(cols[2], r["vendor"])
+                    cell(cols[3], r["type"])
+                    cell(cols[4], r["date"], "id")
+                    cell(cols[5], r["status"], as_pill=True)
+                    if cols[6].button("Open", key=f"co_open_{r['case_id']}"):
+                        ss.view_case = r["case_id"]
+                        st.rerun()
 
 
 # =====================================================================================
@@ -819,7 +987,7 @@ elif page == "docs":
     st.caption("One row per record: how it arrived, what Module 1 decided, and what Module 2 did with it.")
     rows = controls("docs", annie.list_documents(con),
                     ["record_id", "doc_type", "channel", "source_file", "module1_status", "route", "module2_outcome", "case_id", "received_at"])
-    st.dataframe(pd.DataFrame(rows))
+    st.dataframe(pretty(pd.DataFrame(rows)), hide_index=True)
 
 
 # =====================================================================================
@@ -832,21 +1000,23 @@ elif page == "archive":
         st.info("No posted cases yet.")
     else:
         rows = controls("archive", rows, CASE_SORTS + ["posted_at"])
-        widths = [1.3, 2.0, 1.6, 2.0, 1.2, 2.0, 0.9, 1.2]
-        for col, h in zip(st.columns(widths), ["Case", "Vendor", "Invoice", "PO/PR", "Amount", "Posted", "", ""]):
-            col.markdown(f"**{h}**")
-        for r in rows:
-            cols = st.columns(widths)
-            vals = [r["case_id"], r["vendor"], r["invoice_reference"], r["po_references"] or "-",
-                    f"{r['amount']:,.2f}" if r["amount"] is not None else "-", r["posted_at"]]
-            for col, v in zip(cols, vals):
-                col.write(v)
-            if cols[6].button("Open", key=f"ar_{r['case_id']}"):
-                ss.view_case = r["case_id"]
-                st.rerun()
-            pkg = annie.read_archive_package(con, r["case_id"])
-            if pkg:
-                cols[7].download_button("Package", pkg, file_name=f"{r['case_id']}.zip", mime="application/zip", key=f"arz_{r['case_id']}")
+        widths = [1.6, 2.0, 1.5, 1.6, 1.2, 1.8, 0.9, 1.2]
+        with st.container(key="tbl_archive"):
+            head_row(widths, ["Case", "Vendor", "Invoice", "PO/PR", "Amount", "Posted", "", ""])
+            for r in rows:
+                cols = st.columns(widths)
+                cell(cols[0], r["case_id"], "id")
+                cell(cols[1], r["vendor"])
+                cell(cols[2], r["invoice_reference"], "id")
+                cell(cols[3], r["po_references"], "refs")
+                cell(cols[4], f"{r['amount']:,.2f}" if r["amount"] is not None else None, "num")
+                cell(cols[5], str(r["posted_at"] or "").replace("T", " ")[:16], "id")
+                if cols[6].button("Open", key=f"ar_{r['case_id']}"):
+                    ss.view_case = r["case_id"]
+                    st.rerun()
+                pkg = annie.read_archive_package(con, r["case_id"])
+                if pkg:
+                    cols[7].download_button("Package", pkg, file_name=f"{r['case_id']}.zip", mime="application/zip", key=f"arz_{r['case_id']}")
 
 
 # =====================================================================================
@@ -855,57 +1025,58 @@ elif page == "archive":
 elif page == "audit":
     stages = st.multiselect("Stage", ["MODULE 1", "MODULE 2"], default=["MODULE 1", "MODULE 2"])
     rows = controls("audit", annie.list_log(con, stages), ["ts", "stage", "event", "record_id", "case_id"])
-    st.dataframe(pd.DataFrame(rows))
+    st.dataframe(pretty(pd.DataFrame(rows)), hide_index=True)
 
 
 # =====================================================================================
 # 12. PAGE: CONTROLS (sample data, database reset, Module 1 status)
 # =====================================================================================
 elif page == "controls":
-    st.subheader("Sample data")
-    if st.button("Load sample documents") and SAMPLES.exists():
-        ss.results += annie.load_samples(con, SAMPLES)
-        st.rerun()
-    st.caption("Optional: loads pre-extracted sample JSONs (if a samples folder with JSON files exists) in place of Module 1 text extraction.")
-    st.divider()
-    st.subheader("Database")
-    if st.button("Reset database"):
-        annie.reset_db(con)
-        ss.results = []
-        st.rerun()
-    st.caption("Deletes every document, case, allocation, GR/SES, archive entry and log line.")
-    st.divider()
-    st.subheader("Inbox monitor (automatic fetch)")
-    mon = annie.monitor_status()
-    st.write(f"Status: **{'running, every ' + str(mon['poll_seconds']) + ' s' if mon['running'] else 'stopped'}**"
-             + (f" | last scan: {mon['last_run']}" if mon["last_run"] else ""))
-    if mon["last"]:
-        st.caption("Last scan: " + ", ".join(f"{k} {v}" for k, v in mon["last"].items()))
-    if mon["last_error"]:
-        st.error("Last scan failed: " + mon["last_error"])
-    b1, b2, _ = st.columns([1, 1, 4])
-    if b1.button("Start", disabled=mon["running"] or not annie.email_config_status()["ok"]):
-        annie.start_monitor()
-        st.rerun()
-    if b2.button("Stop", disabled=not mon["running"]):
-        annie.stop_monitor()
-        st.rerun()
-    st.caption("Interval is POLL_SECONDS in .env (15-3600, default 60); a changed value needs an app restart (.env is read at startup). "
-               "Set EMAIL_AUTO_FETCH=0 to stop it starting automatically. Mail is never marked as read.")
-    alerts = annie.open_alerts(con)
-    if alerts:
-        st.markdown("**Open alerts**")
-        for al in alerts:
-            c1, c2 = st.columns([8, 1])
-            c1.warning(f"{al['created_at']} - {al['title']}: {al['detail']}")
-            if c2.button("Dismiss", key=f"ack_{al['id']}"):
-                annie.acknowledge_alert(con, al["id"])
-                st.rerun()
-    st.divider()
-    st.subheader("Module 1 status")
-    ref = annie.get_reference_summary()
-    st.write(f"OCR engine: **{ref['ocr_engine'] or 'not available'}**")
-    st.write(f"Reference samples: {ref['purchase_orders']} PO/PR, {ref['supplier_invoices']} invoices")
-    em = annie.email_config_status()
-    st.write("Email: " + ("configured" if em["ok"] else "missing " + ", ".join(em["missing"])))
-    st.caption(f"Line-match threshold >= {annie.LINK_THRESHOLD}   |   Vendor-name gate >= {annie.VENDOR_MIN}")
+    with st.container(key="card_samples"):
+        st.subheader("Sample data")
+        if st.button("Load sample documents") and SAMPLES.exists():
+            ss.results += annie.load_samples(con, SAMPLES)
+            st.rerun()
+        st.caption("Optional: loads pre-extracted sample JSONs (if a samples folder with JSON files exists) in place of Module 1 text extraction.")
+    with st.container(key="card_inbox"):
+        st.subheader("Inbox monitor (automatic fetch)")
+        mon = annie.monitor_status()
+        st.write(f"Status: **{'running, every ' + str(mon['poll_seconds']) + ' s' if mon['running'] else 'stopped'}**"
+                 + (f" | last scan: {mon['last_run']}" if mon["last_run"] else ""))
+        if mon["last"]:
+            st.caption("Last scan: " + ", ".join(f"{k} {v}" for k, v in mon["last"].items()))
+        if mon["last_error"]:
+            st.error("Last scan failed: " + mon["last_error"])
+        b1, b2, _ = st.columns([1, 1, 4])
+        if b1.button("Start", disabled=mon["running"] or not annie.email_config_status()["ok"]):
+            annie.start_monitor()
+            st.rerun()
+        if b2.button("Stop", disabled=not mon["running"]):
+            annie.stop_monitor()
+            st.rerun()
+        st.caption("Interval is POLL_SECONDS in .env (15-3600, default 60); a changed value needs an app restart (.env is read at startup). "
+                   "Set EMAIL_AUTO_FETCH=0 to stop it starting automatically. Mail is never marked as read.")
+        alerts = annie.open_alerts(con)
+        if alerts:
+            st.markdown("**Open alerts**")
+            for al in alerts:
+                c1, c2 = st.columns([8, 1])
+                c1.warning(f"{al['created_at']} - {al['title']}: {al['detail']}")
+                if c2.button("Dismiss", key=f"ack_{al['id']}"):
+                    annie.acknowledge_alert(con, al["id"])
+                    st.rerun()
+    with st.container(key="card_status"):
+        st.subheader("Module 1 status")
+        ref = annie.get_reference_summary()
+        st.write(f"OCR engine: **{ref['ocr_engine'] or 'not available'}**")
+        st.write(f"Reference samples: {ref['purchase_orders']} PO/PR, {ref['supplier_invoices']} invoices")
+        em = annie.email_config_status()
+        st.write("Email: " + ("configured" if em["ok"] else "missing " + ", ".join(em["missing"])))
+        st.caption(f"Line-match threshold >= {annie.LINK_THRESHOLD}   |   Vendor-name gate >= {annie.VENDOR_MIN}")
+    with st.container(key="card_danger"):
+        st.subheader("Danger zone")
+        if st.button("Reset database", key="reset_db"):
+            annie.reset_db(con)
+            ss.results = []
+            st.rerun()
+        st.caption("Deletes every document, case, allocation, GR/SES, archive entry and log line. This cannot be undone.")
