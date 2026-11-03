@@ -31,3 +31,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Local deploy secrets (app login) - never commit
+.deploy/
