@@ -11,4 +11,3 @@ pillow-heif
 rapidocr
 onnxruntime
 numpy
-streamlit-pdf-viewer

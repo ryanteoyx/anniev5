@@ -71,8 +71,9 @@ The live demo runs on **Streamlit Community Cloud** (free) from the `ui-polish` 
 
 ## Demo mode
 
-- **Auto-load:** an empty database is filled with the sample documents when the app starts, so the
-  demo never opens blank. Set `DEMO_AUTOLOAD=0` to turn this off.
+- **Auto-load:** on Streamlit Community Cloud the app resets to the sample documents every time it
+  starts or is redeployed, so the demo always opens complete. Locally it only fills an empty
+  database. `DEMO_AUTOLOAD` overrides this: `reset`, `1` (empty database only) or `0` (off).
 - **Controls → Demo data → Reset & load demo data** restores the starting state before a
   presentation; **Danger zone → Reset database (empty)** clears everything for live uploads.
 - Both need the **admin PIN**: `ADMIN_PIN = "..."` in the app's Settings → Secrets on Streamlit Cloud,

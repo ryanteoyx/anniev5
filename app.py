@@ -3,17 +3,15 @@
 # =====================================================================================
 # 1. IMPORTS AND SETUP
 # =====================================================================================
-import base64
 import hmac
 import html
 import os
 from datetime import date
 from pathlib import Path
-from streamlit_pdf_viewer import pdf_viewer
 
+import pymupdf   # renders PDF previews as images
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 
 import annie_core as annie
 
@@ -40,12 +38,20 @@ def load_demo(con):
     return out
 
 
+ON_COMMUNITY_CLOUD = Path(__file__).resolve().as_posix().startswith("/mount/src/")
+
+
 @st.cache_resource(show_spinner="Preparing the demo data...")
 def demo_autoload(_con):
-    """Once per app start: an empty database gets the demo documents, so the site never opens blank.
-    The free host wipes the disk on restart, so this is what brings the demo back. DEMO_AUTOLOAD=0 turns it off."""
-    if setting("DEMO_AUTOLOAD", "1") == "0" or annie.list_documents(_con):
+    """Once per app start, so the site never opens blank or half-used.
+    DEMO_AUTOLOAD: "reset" = clear the database and load the demo documents (default on Streamlit Community Cloud,
+    so every restart or redeploy starts a clean demo); "1" = load them only into an empty database (default locally);
+    "0" = never."""
+    mode = setting("DEMO_AUTOLOAD", "reset" if ON_COMMUNITY_CLOUD else "1")
+    if mode == "0" or (mode != "reset" and annie.list_documents(_con)):
         return 0
+    if mode == "reset":
+        annie.reset_db(_con)
     return len(load_demo(_con))
 
 
@@ -67,24 +73,29 @@ DEFAULT_ORDER = "Default order"
 # =====================================================================================
 # 2. SHARED UI HELPERS (previews, summaries, filter/sort controls, tab bubbles)
 # =====================================================================================
+@st.cache_data(show_spinner=False, max_entries=200)
+def pdf_pages(path, mtime):
+    """PDF pages as PNG images, rendered once per file and reused (mtime makes a replaced file render again)."""
+    with pymupdf.open(path) as pdf:
+        return [page.get_pixmap(dpi=120).tobytes("png") for page in pdf]
+
+
 def file_view(doc, height=620, key=""):
-    """Preview a stored file: PDF inline, image inline, anything else as download."""
+    """Preview a stored file: PDF pages and images inline, anything else as a download."""
     path = Path(doc["file_path"]) if doc and doc.get("file_path") else None
     if not path or not path.exists():
         st.info("No file stored for this document.")
         return
-    data = path.read_bytes()
     ext = path.suffix.lower()
     if ext == ".pdf":
-        pdf_viewer(data, height=height)
-        #b64 = base64.b64encode(data).decode()
-        #components.html(f'<iframe src="data:application/pdf;base64,{b64}" width="100%" height="{height - 10}" '
-        #                f'style="border:1px solid #ccc"></iframe>', height=height)
+        with st.container(height=height, key=f"preview_{key}"):
+            for png in pdf_pages(str(path), path.stat().st_mtime):
+                st.image(png)
     elif ext in annie.IMAGE_EXTENSIONS and ext not in (".heic", ".heif", ".tif", ".tiff"):
-        st.image(data)
+        st.image(str(path))
     else:
         st.caption(f"Preview not available for {ext} files.")
-    st.download_button("Download original file", data, file_name=path.name, key=f"dl_{key}_{path.name}")
+    st.download_button("Download original file", path.read_bytes(), file_name=path.name, key=f"dl_{key}_{path.name}")
 
 
 BASIS_LABEL = {"QTY": "Qty", "AMOUNT": "Amount", "SINGLE": "Single invoice (tick)"}
@@ -208,6 +219,9 @@ def nice(code):
 
 
 def render_results(results):
+    if not results:
+        st.caption("Nothing submitted in this session yet. Processed files are listed here with where Annie routed them.")
+        return
     rows = list(results)[::-1]
     rows = controls("results", rows, ["source_file", "m1_status", "route", "record_id"])
     for r in rows:
@@ -243,7 +257,10 @@ def gr_form(case_id, lines):
                                 billed_this_invoice=l["billed_this"], receive_now=min(l["needed"], l["room"])) for l in lines])
         edited = st.data_editor(df, hide_index=True, key=f"gr_ed_{case_id}",
                                 disabled=[c for c in df.columns if c != "receive_now"],
-                                column_config={"receive_now": st.column_config.NumberColumn("Receive now (single invoice: 1 = done)", min_value=0.0)})
+                                column_config={"line_id": "Line", "po_reference": "PO/PR", "item": "Item", "basis": "Basis",
+                                               "ordered": "Ordered", "received_for_this_invoice": "Received so far",
+                                               "billed_this_invoice": "Billed on this invoice",
+                                               "receive_now": st.column_config.NumberColumn("Receive now (single invoice: 1 = done)", min_value=0.0)})
         submitted = st.form_submit_button("Submit GR/SES", type="primary")
     if submitted:
         totals = {}
@@ -276,17 +293,23 @@ def manual_panel(case_id):
             best = max(cands, key=lambda c: (annie.line_score(ln, c, False, False), c["vendor_sim"]))
             val = ln["qty"] if best["basis"] == "QTY" else (1.0 if best["basis"] == "SINGLE" else ln["amount"])
             seed.append(dict(inv_line=ln["index"], invoice_item=ln["description"], po_line=best["label"], allocate=min(val, best["open"]) if best["basis"] != "SINGLE" else 1.0))
-        edited = st.data_editor(pd.DataFrame(seed), num_rows="dynamic", hide_index=True, key=f"mm_{case_id}", disabled=["invoice_item"],
-                                column_config={"inv_line": st.column_config.NumberColumn("Invoice line", min_value=1, max_value=len(inv_lines), step=1),
-                                               "invoice_item": "Invoice item",
-                                               "po_line": st.column_config.SelectboxColumn("PO/PR line", options=list(by_label), width="large", required=True),
-                                               "allocate": st.column_config.NumberColumn("Qty / amount", min_value=0.0)})
+        # a form: editing the table or typing the reason does not rerun the page until Check or Confirm is pressed
+        with st.form(f"mm_form_{case_id}", border=False):
+            edited = st.data_editor(pd.DataFrame(seed), num_rows="dynamic", hide_index=True, key=f"mm_{case_id}", disabled=["invoice_item"],
+                                    column_config={"inv_line": st.column_config.NumberColumn("Invoice line", min_value=1, max_value=len(inv_lines), step=1),
+                                                   "invoice_item": "Invoice item",
+                                                   "po_line": st.column_config.SelectboxColumn("PO/PR line", options=list(by_label), width="large", required=True),
+                                                   "allocate": st.column_config.NumberColumn("Qty / amount", min_value=0.0)})
+            reason = st.text_input("Reason for the manual match (required to confirm)", key=f"mm_reason_{case_id}")
+            b1, b2, _ = st.columns([1.2, 2, 3])
+            check = b1.form_submit_button("Check match")
+            confirm = b2.form_submit_button("Confirm manual match", type="primary")
         rows = []
         for r in edited.to_dict("records"):
             if pd.isna(r.get("inv_line")) or r.get("po_line") not in by_label or pd.isna(r.get("allocate")):
                 continue
             rows.append(dict(inv_line=int(r["inv_line"]), po_line_id=by_label[r["po_line"]]["line_id"], value=float(r["allocate"])))
-        if st.button("Check match", key=f"mm_chk_btn_{case_id}"):
+        if check:
             ss[f"mm_chk_{case_id}"] = annie.manual_match(con, case_id, rows, dry_run=True)
         chk = ss.get(f"mm_chk_{case_id}")
         if chk:
@@ -299,8 +322,7 @@ def manual_panel(case_id):
                            "You can still confirm, with a reason.")
             elif chk["ok"]:
                 st.success("Checks passed.")
-        reason = st.text_input("Reason for the manual match (required)", key=f"mm_reason_{case_id}")
-        if st.button("Confirm manual match", type="primary", key=f"mm_go_{case_id}"):
+        if confirm:
             try:
                 res = annie.manual_match(con, case_id, rows, reason=reason)
                 ss.pop(f"mm_chk_{case_id}", None)
@@ -315,8 +337,10 @@ def unmatch_panel(case_id):
     with st.expander("Unmatch (send back to Stage 1)"):
         st.caption("Reverses the billing on the PO/PR lines (a single-invoice PO/PR becomes open again) and returns this invoice to "
                    "Stage 1 so you can match it manually. It will not be re-matched automatically. GR/SES batches raised for this match are voided.")
-        reason = st.text_input("Reason (required)", key=f"um_reason_{case_id}")
-        if st.button("Unmatch", key=f"um_go_{case_id}"):
+        with st.form(f"um_form_{case_id}", border=False):
+            reason = st.text_input("Reason (required)", key=f"um_reason_{case_id}")
+            go = st.form_submit_button("Unmatch")
+        if go:
             try:
                 annie.unmatch_case(con, case_id, reason)
                 ss.flash = [f"{case_id} unmatched and returned to Stage 1."]
@@ -331,8 +355,12 @@ def dismiss_panel(case_id):
         st.warning("This deletes the invoice and its stored file. Any billing it made on PO/PR lines is reversed "
                    "(many-to-many lines get their balance back; a single-invoice PO/PR returns to Stage 1). "
                    "GR/SES batches raised for this match are voided. The same file can be uploaded again later.")
-        ok = st.checkbox("I understand and want to delete this invoice", key=f"dis_ok_{case_id}")
-        if st.button("Dismiss invoice", key=f"dis_go_{case_id}", disabled=not ok):
+        with st.form(f"dis_form_{case_id}", border=False):
+            ok = st.checkbox("I understand and want to delete this invoice", key=f"dis_ok_{case_id}")
+            go = st.form_submit_button("Dismiss invoice")
+        if go and not ok:
+            st.error("Tick the box to confirm the deletion.")
+        elif go:
             try:
                 annie.delete_invoice_case(con, case_id, "Dismissed from the case page")
                 ss.flash = [f"{case_id} dismissed and deleted."]
@@ -399,7 +427,9 @@ def calloff_gr_form(case_id):
                                 receive_now=l["needed"]) for l in lines])
         edited = st.data_editor(df, hide_index=True, key=f"co_gr_ed_{case_id}",
                                 disabled=[c for c in df.columns if c != "receive_now"],
-                                column_config={"receive_now": st.column_config.NumberColumn("Receive now", min_value=0.0)})
+                                column_config={"inv_case": "Invoice case", "invoice": "Invoice", "inv_line": "Line", "item": "Item",
+                                               "basis": "Basis", "billed": "Billed", "received_so_far": "Received so far",
+                                               "receive_now": st.column_config.NumberColumn("Receive now", min_value=0.0)})
         submitted = st.form_submit_button("Submit GR/SES", type="primary")
     if submitted:
         gr = dict(service_date_from=f_from.isoformat(), service_date_to=f_to.isoformat(), prepared_by=po.get("prepared_by"),
@@ -410,17 +440,6 @@ def calloff_gr_form(case_id):
             st.rerun()
         except ValueError as e:
             st.error(str(e))
-
-
-def _add_inv(case_id):
-    ss[f"co_n_{case_id}"] = ss.get(f"co_n_{case_id}", 1) + 1
-
-
-def _drop_inv(case_id):
-    n = ss.get(f"co_n_{case_id}", 1)
-    if n > 1:
-        ss.pop(f"co_inv_{case_id}_{n - 1}", None)
-        ss[f"co_n_{case_id}"] = n - 1
 
 
 def calloff_page(case_id):
@@ -437,12 +456,9 @@ def calloff_page(case_id):
     is_open = c["status"] == annie.S_CALLOFF
     options = annie.calloff_open_invoices(con, case_id) if is_open else []
     by_id = {o["case_id"]: o for o in options}
-    n = ss.setdefault(f"co_n_{case_id}", 1) if is_open else 0
-    for i in range(n):   # forget a selection that is no longer an open invoice
-        if ss.get(f"co_inv_{case_id}_{i}") not in [None] + list(by_id):
-            ss[f"co_inv_{case_id}_{i}"] = None
-    chosen = [ss.get(f"co_inv_{case_id}_{i}") for i in range(n)]
-    chosen = [x for x in chosen if x]
+    sel_key = f"co_sel_{case_id}"
+    ss[sel_key] = [x for x in ss.get(sel_key, []) if x in by_id]   # forget invoices that are no longer open
+    chosen = ss[sel_key]
     with st.container(key="detail_cols"):
         left, right = st.columns(2, gap="large")
     with left:
@@ -461,27 +477,23 @@ def calloff_page(case_id):
     with right:
         st.markdown("#### Match invoices to this Call-Off PO/PR")
         if is_open:
-            st.info("This PO/PR cites no amount, so Annie does not match it automatically. Pick each invoice that bills against it "
-                    "(use + Add Invoice for more), then press Confirm. The case moves to Stage 2 (Pending GR/SES).")
+            st.info("This PO/PR cites no amount, so Annie does not match it automatically. Select every invoice that bills "
+                    "against it (each one opens beside the PO/PR for checking), give a reason and press Confirm. "
+                    "The case moves to Stage 2 (Pending GR/SES).")
             if not options:
                 st.warning("No open invoices are waiting in Stage 1.")
-            for i in range(n):
-                st.selectbox(f"Invoice {i + 1}", [None] + list(by_id), key=f"co_inv_{case_id}_{i}",
-                             format_func=lambda v: "Select an open invoice..." if v is None else by_id[v]["label"])
-            b1, b2, _ = st.columns([1.7, 1.7, 2.2])
-            b1.button("+ Add Invoice", key=f"co_add_{case_id}", on_click=_add_inv, args=(case_id,))
-            if n > 1:
-                b2.button("Remove last", key=f"co_drop_{case_id}", on_click=_drop_inv, args=(case_id,))
-            if len(chosen) != len(set(chosen)):
-                st.error("The same invoice is selected more than once.")
-            for cid in dict.fromkeys(chosen):
+            st.multiselect("Invoices billed against this PO/PR", list(by_id), key=sel_key,
+                           format_func=lambda v: by_id[v]["label"], placeholder="Select open invoices...")
+            for cid in chosen:
                 if by_id[cid]["vendor_sim"] < annie.VENDOR_MIN:
                     st.warning(f"{cid}: vendor name looks different (similarity {by_id[cid]['vendor_sim']:.2f}).")
-            reason = st.text_input("Reason for the match (required)", key=f"co_reason_{case_id}")
-            if st.button("Confirm", type="primary", key=f"co_go_{case_id}", disabled=not chosen):
+            with st.form(f"co_form_{case_id}", border=False):
+                reason = st.text_input("Reason for the match (required)", key=f"co_reason_{case_id}")
+                go = st.form_submit_button("Confirm", type="primary", disabled=not chosen)
+            if go:
                 try:
                     res = annie.confirm_calloff(con, case_id, chosen, reason)
-                    for k in [k for k in list(ss.keys()) if str(k).startswith((f"co_inv_{case_id}_", f"co_n_{case_id}", f"co_reason_{case_id}"))]:
+                    for k in (sel_key, f"co_reason_{case_id}"):
                         ss.pop(k, None)
                     ss.flash = [f"{case_id} matched with {len(res['invoices'])} invoice(s) and moved to Stage 2 (Pending GR/SES)."]
                     st.rerun()
@@ -578,9 +590,12 @@ def case_page(case_id):
 # 2B. STYLESHEET, SIDE NAVIGATION (light list, active page highlighted) AND PROCESSING TABS
 # =====================================================================================
 SIDE = [("dashboard", "Dashboard"), ("submit", "Submit Document"), ("review", "Intake Review"), ("processing", "Processing"),
-        ("docs", "Documents"), ("archive", "Complete Archive"), ("audit", "Audit Log"), ("controls", "Controls")]
+        ("archive", "Complete Archive"), ("docs", "Documents"), ("audit", "Audit Log"), ("controls", "Controls")]
+# navigation follows the AP flow: intake -> review -> match/receive/post -> archive, then the records and admin pages
+SIDE_GROUP = {"submit": "Workflow", "docs": "Records", "controls": "Admin"}   # a group label before these items
 PAGE_TITLES = dict(SIDE)
-PTABS = [("s1", "Stage 1 - Open cases"), ("s2", "Stage 2 - Pending GR/SES"), ("s3", "Stage 3 - Complete"), ("calloff", "Call-Offs")]
+# Call-Offs sit next to Stage 1: both are invoices waiting to be matched, and a confirmed Call-Off moves to Stage 2
+PTABS = [("s1", "Stage 1 - Open cases"), ("calloff", "Call-Offs"), ("s2", "Stage 2 - Pending GR/SES"), ("s3", "Stage 3 - Complete")]
 ss.setdefault("side", "dashboard")
 ss.setdefault("ptab", "s1")
 pending = annie.counts(con)
@@ -601,8 +616,10 @@ st.markdown("""
     --line-soft:#f1f5f9;    /* row dividers, hover and neutral fills */
     --canvas:#f8fafc;       /* page background */
     --surface:#ffffff;      /* cards, tables, sidebar */
-    --accent:#2563eb;       /* primary actions, links, active tab */
+    --accent:#2563eb;       /* primary actions, links, active tab, current page */
     --accent-strong:#1d4ed8;
+    --accent-soft:#eff6ff;  /* current page and active-stage tints */
+    --accent-line:#bfdbfe;
     --ok:#15803d;   --ok-soft:#f0fdf4;
     --warn:#b45309; --warn-soft:#fffbeb;
     --bad:#b91c1c;  --bad-soft:#fef2f2;
@@ -613,6 +630,18 @@ html, body, [class*="st-"], .stMarkdown, button, input, textarea, select {
     font-family:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;}
 /* Streamlit draws icons from ligatures in its own icon font - never override it */
 [data-testid="stIconMaterial"], .material-symbols-rounded {font-family:'Material Symbols Rounded' !important;}
+/* An icon is its name drawn as a ligature, so until that font arrives it would read as a word
+   ("keyboard_double_arrow_right"). Keep icons one glyph wide and invisible until the font is ready. */
+[data-testid="stIconMaterial"] {max-width:1.25em; overflow:hidden; white-space:nowrap;}
+html:not(.annie-icons) [data-testid="stIconMaterial"] {color:transparent !important;}
+/* The sidebar open/close buttons draw their own chevrons, so they never depend on the icon font. */
+[data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"],
+[data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"] {display:none;}
+[data-testid="stExpandSidebarButton"]::before, [data-testid="stSidebarCollapseButton"] button::before {
+    content:""; width:18px; height:18px; background:var(--ink-2);
+    -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 17l5-5-5-5M13 17l5-5-5-5'/%3E%3C/svg%3E") center/contain no-repeat;
+    mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 17l5-5-5-5M13 17l5-5-5-5'/%3E%3C/svg%3E") center/contain no-repeat;}
+[data-testid="stSidebarCollapseButton"] button::before {transform:scaleX(-1); background:var(--muted);}
 .stApp {background:var(--canvas); color:var(--ink-2);}
 .block-container, [data-testid="stMainBlockContainer"] {max-width:1280px; padding-top:2.6rem; padding-bottom:4rem;}
 /* hide Streamlit's Deploy/menu chrome and heading anchors, but keep the sidebar open/close button usable */
@@ -620,7 +649,7 @@ html, body, [class*="st-"], .stMarkdown, button, input, textarea, select {
 [data-testid="stHeaderActionElements"], footer, #MainMenu {display:none !important;}
 [data-testid="stHeader"] {background:rgba(248,250,252,.86); backdrop-filter:blur(8px);}
 [data-testid="stExpandSidebarButton"] {background:var(--surface); border:1px solid var(--line); border-radius:8px;
-    width:40px; height:40px; box-shadow:0 1px 2px rgba(15,23,42,.06);}
+    width:40px; height:40px; box-shadow:0 1px 2px rgba(15,23,42,.06); display:flex; align-items:center; justify-content:center;}
 [data-testid="stExpandSidebarButton"] [data-testid="stIconMaterial"] {color:var(--ink) !important;}
 [data-testid="stExpandSidebarButton"]:hover {background:var(--line-soft);}
 
@@ -654,6 +683,16 @@ hr {border-color:var(--line); margin:1.4rem 0;}
 [data-testid="stAlertContainer"] {border-radius:10px;}
 [data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]) {background:var(--surface); border:1px solid var(--line); color:var(--ink-2);}
 [data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]) * {color:var(--ink-2);}
+/* a thin left strip says what kind of note it is */
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]) {box-shadow:inset 3px 0 0 var(--accent);}
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"]) {box-shadow:inset 3px 0 0 var(--warn);}
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentError"]) {box-shadow:inset 3px 0 0 var(--bad);}
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentSuccess"]) {box-shadow:inset 3px 0 0 var(--ok);}
+/* multi-selects match the other inputs; chosen items carry the accent tint */
+[data-testid="stMain"] [data-testid="stMultiSelect"] [data-baseweb="select"] > div {background:var(--surface); border:1px solid var(--line-strong); border-radius:8px;}
+[data-testid="stMain"] [data-testid="stMultiSelect"] [data-baseweb="tag"] {background:var(--accent-soft) !important; color:var(--accent-strong) !important;
+    border:1px solid var(--accent-line);}
+[data-testid="stMain"] [data-testid="stMultiSelect"] [data-baseweb="tag"] * {color:var(--accent-strong) !important;}
 
 /* ---- Tables, expanders, cards ---------------------------------------- */
 [data-testid="stDataFrame"], [data-testid="stTable"] {border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--surface);}
@@ -693,9 +732,29 @@ hr {border-color:var(--line); margin:1.4rem 0;}
 .detail-meta b {color:var(--ink); font-weight:600;}
 
 /* ---- Dashboard figures: neutral cards, the number carries the weight --- */
-.stat-grid {display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px; margin:.6rem 0 1.4rem 0;}
-.stat-card {background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:16px 18px;}
-.stat-card .label {color:var(--muted); font-size:.78rem; font-weight:500;}
+.st-key-tiles {margin:.6rem 0 1.4rem 0;}
+.st-key-tiles [data-testid="stHorizontalBlock"] {gap:12px; align-items:stretch;}
+/* equal-height cards: every wrapper between the column and the card grows to the row height */
+.st-key-tiles [data-testid="stColumn"] {display:flex; flex-direction:column;}
+.st-key-tiles [data-testid="stColumn"] *:has(.stat-card) {display:flex; flex-direction:column; flex:1 1 auto;}
+.st-key-tiles [data-testid="stMarkdownContainer"] {margin-bottom:0;}
+/* each card is one big button: the real button is stretched over it, invisible */
+[class*="st-key-tile_"] {position:relative; gap:0 !important;}
+[class*="st-key-tilebtn_"] {position:absolute; inset:0; z-index:1;}
+[class*="st-key-tilebtn_"] [data-testid="stButton"], [class*="st-key-tilebtn_"] button {width:100%; height:100%; opacity:0; cursor:pointer;}
+[class*="st-key-tile_"]:hover .stat-card {border-color:var(--line-strong); box-shadow:0 1px 3px rgba(15,23,42,.06);}
+[class*="st-key-tile_"]:has(button:focus-visible) .stat-card {border-color:var(--accent);}
+.stat-card {background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:16px 18px; flex:1 1 auto;
+    transition:border-color .12s, box-shadow .12s;}
+.stat-card .label {color:var(--muted); font-size:.78rem; font-weight:500; display:flex; align-items:flex-start; gap:7px;}
+/* a small status dot and a coloured figure, only when there is something in that state */
+.stat-card .label::before {content:""; width:7px; height:7px; border-radius:50%; background:var(--line-strong); flex:none; margin-top:.42em;}
+.stat-card.warn .label::before {background:var(--warn);}
+.stat-card.warn .value {color:var(--warn);}
+.stat-card.ok .label::before {background:var(--ok);}
+.stat-card.ok .value {color:var(--ok);}
+.stat-card.info .label::before {background:var(--accent);}
+.stat-card.info .value {color:var(--accent-strong);}
 .stat-card .value {color:var(--ink); font-size:1.85rem; font-weight:600; line-height:1.2; margin-top:.3rem;
     letter-spacing:-.02em; font-variant-numeric:tabular-nums;}
 .stat-card .foot {color:var(--faint); font-size:.76rem; margin-top:.15rem;}
@@ -714,6 +773,8 @@ hr {border-color:var(--line); margin:1.4rem 0;}
 /* ---- Sidebar: light, like the rest of the page ------------------------ */
 [data-testid="stSidebar"] {background:var(--surface); border-right:1px solid var(--line);}
 [data-testid="stSidebar"] h3 {color:var(--ink); font-weight:700; letter-spacing:-.01em; padding:.2rem .5rem 1rem .5rem;}
+.nav-group {color:var(--faint); font-size:.68rem; font-weight:600; text-transform:uppercase; letter-spacing:.07em;
+    padding:1rem .75rem .35rem;}
 [class*="st-key-side_"], [class*="st-key-side_"] [data-testid="stButton"] {width:100% !important;}
 [class*="st-key-side_"] button {width:100%; justify-content:flex-start; text-align:left; border-radius:8px; padding:.5rem .75rem;
     min-height:0; margin:0 0 2px 0; font-weight:500; background:transparent; color:var(--ink-2); border:none; box-shadow:none;}
@@ -723,8 +784,13 @@ hr {border-color:var(--line); margin:1.4rem 0;}
 [class*="st-key-side_"] button p {color:inherit; margin:0; width:100%; text-align:left; display:flex; align-items:center; gap:.5rem;}
 [class*="st-key-side_"] button .stMarkdownBadge {margin-left:auto;}
 [class*="st-key-side_"] button[kind="secondary"]:hover {background:var(--line-soft); color:var(--ink);}
-[class*="st-key-side_"] button[kind="primary"], [class*="st-key-side_"] button[kind="primary"]:hover {background:var(--line-soft); color:var(--ink); font-weight:600;}
-[class*="st-key-side_"] button[kind="primary"] .stMarkdownBadge {background:var(--surface) !important;}
+/* the current page carries the accent (tint, text and a short bar), as in most finance tools */
+[class*="st-key-side_"] button[kind="primary"], [class*="st-key-side_"] button[kind="primary"]:hover {background:var(--accent-soft);
+    color:var(--accent-strong); font-weight:600; box-shadow:inset 3px 0 0 var(--accent);}
+[class*="st-key-side_"] button[kind="primary"] .stMarkdownBadge {background:var(--surface) !important; color:var(--accent-strong) !important;}
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {gap:2px;}
+.brand {font-size:1.2rem; font-weight:700; color:var(--ink); letter-spacing:-.02em; padding:.2rem .75rem .9rem;}
+.brand span {color:var(--accent);}
 
 /* ---- Processing stages: underline tabs with counts; scroll sideways on phones ---- */
 .st-key-ptabs {border-bottom:1px solid var(--line); margin-bottom:.4rem;}
@@ -739,6 +805,8 @@ hr {border-color:var(--line); margin:1.4rem 0;}
 [data-testid="stMain"] [class*="st-key-ptab_"] button[kind="primary"] {color:var(--ink); border-bottom-color:var(--accent); font-weight:600;
     padding:.5rem .8rem .6rem;}
 [data-testid="stMain"] [class*="st-key-ptab_"] button[kind="primary"] p {font-size:1.1rem;}
+[data-testid="stMain"] [class*="st-key-ptab_"] button[kind="primary"] .stMarkdownBadge {background:var(--accent-soft) !important;
+    color:var(--accent-strong) !important;}
 [data-testid="stMain"] [class*="st-key-polink_"] button[kind] {background:transparent; border:none; padding:0; min-height:0;
     justify-content:flex-start; box-shadow:none; color:var(--accent); font-weight:500; white-space:nowrap;}
 [data-testid="stMain"] [class*="st-key-polink_"] button p {color:inherit; margin:0; text-align:left; font-size:.84rem;
@@ -752,6 +820,8 @@ hr {border-color:var(--line); margin:1.4rem 0;}
 
 /* ---- Tablets: detail pages stack the document above the allocation panel ---- */
 @media (max-width: 1024px) {
+    .st-key-tiles [data-testid="stHorizontalBlock"] {flex-wrap:wrap !important;}
+    .st-key-tiles [data-testid="stColumn"] {flex:1 1 calc(33.33% - 8px) !important; min-width:calc(33.33% - 8px) !important;}
     .st-key-detail_cols [data-testid="stHorizontalBlock"] {flex-wrap:wrap !important;}
     .st-key-detail_cols [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {flex:1 1 100% !important; min-width:100% !important;}
 }
@@ -761,7 +831,7 @@ hr {border-color:var(--line); margin:1.4rem 0;}
     .block-container, [data-testid="stMainBlockContainer"] {padding:3.8rem 1rem 3rem !important;}
     [data-testid="stMain"] h2 {font-size:1.5rem;}
     [data-testid="stMain"] h3 {font-size:1rem;}
-    .stat-grid {grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px;}
+    .st-key-tiles [data-testid="stColumn"] {flex:1 1 calc(50% - 6px) !important; min-width:calc(50% - 6px) !important;}
     .stat-card {padding:14px 14px 12px;}
     .stat-card .value {font-size:1.55rem;}
     .stat-card .label {font-size:.72rem;}
@@ -777,8 +847,10 @@ hr {border-color:var(--line); margin:1.4rem 0;}
 """, unsafe_allow_html=True)
 
 
-def go_side(key):
+def go_side(key, tab=None):
     ss.side, ss.view_case, ss.view_po = key, None, None
+    if tab:
+        ss.ptab = tab
 
 
 def set_ptab(key):
@@ -794,13 +866,22 @@ def monitor_watch():
 
 
 with st.sidebar:
-    st.markdown("### Annie.")
+    st.markdown('<div class="brand">Annie<span>.</span></div>', unsafe_allow_html=True)
     for key, label in SIDE:
+        if key in SIDE_GROUP:
+            st.markdown(f'<div class="nav-group">{SIDE_GROUP[key]}</div>', unsafe_allow_html=True)
         st.button(label + bubble(side_badge.get(key, 0)), key=f"side_{key}", type="primary" if ss.side == key else "secondary",
                   on_click=go_side, args=(key,))
     monitor_watch()
     # On phones the sidebar is an overlay drawer: close it once a page is picked (display only).
     st.html("""<script>
+    // Show icons only once their font has loaded (see the stIconMaterial rules in the stylesheet).
+    if (!document.__annieIcons) {
+      document.__annieIcons = true;
+      const ready = () => document.documentElement.classList.add("annie-icons");
+      document.fonts.load('24px "Material Symbols Rounded"').then((faces) => faces.length && ready());
+      document.fonts.ready.then(() => document.fonts.check('24px "Material Symbols Rounded"') && ready());
+    }
     if (!document.__annieNavClose) {
       document.__annieNavClose = true;
       document.addEventListener("click", (e) => {
@@ -894,21 +975,24 @@ st.header(PAGE_TITLES[page])
 if page == "dashboard":
     # received documents only: GR/SES forms are generated by Annie, not received
     total = sum(1 for d in annie.list_documents(con) if d["channel"] != "GR/SES FORM")
+    # in process order; each card opens the page or stage that holds those items
+    # tone: "warn" = someone has to act, "ok" = ready to post, "info" = in progress; a zero is always neutral
     tiles = [
-        ("Documents processed", total, "all channels"),
-        ("Needs review", pending["review"], "in Intake Review"),
-        ("Open", pending["s1"], "invoices to match, PO/PRs with balance"),
-        ("Pending GR/SES", pending["s2"], "awaiting goods or service receipt"),
-        ("Complete", pending["s3"], "received, ready to post"),
-        ("Call-offs", pending["calloff"], "awaiting a manual match"),
+        ("Documents processed", total, "all channels", ("docs", None), "neutral"),
+        ("Needs review", pending["review"], "in Intake Review", ("review", None), "warn"),
+        ("Open", pending["s1"], "invoices to match, PO/PRs with balance", ("processing", "s1"), "warn"),
+        ("Call-offs", pending["calloff"], "awaiting a manual match", ("processing", "calloff"), "warn"),
+        ("Pending GR/SES", pending["s2"], "awaiting goods or service receipt", ("processing", "s2"), "info"),
+        ("Complete", pending["s3"], "received, ready to post", ("processing", "s3"), "ok"),
     ]
-    cards = "".join(
-        f'<div class="stat-card"><div class="label">{lbl}</div>'
-        f'<div class="value">{val}</div><div class="foot">{foot}</div></div>'
-        for lbl, val, foot in tiles
-    )
-    st.caption("Purchase orders and invoices from intake through 3-way matching, goods receipt and posting.")
-    st.markdown(f'<div class="stat-grid">{cards}</div>', unsafe_allow_html=True)
+    st.caption("Purchase orders and invoices from intake through 3-way matching, goods receipt and posting. "
+               "Select a figure to open that list.")
+    with st.container(key="tiles"):
+        for col, (lbl, val, foot, (side, tab), tone) in zip(st.columns(len(tiles), gap="small"), tiles):
+            with col, st.container(key=f"tile_{side}_{tab or 'all'}"):
+                st.markdown(f'<div class="stat-card {tone if val else "neutral"}"><div class="label">{lbl}</div>'
+                            f'<div class="value">{val}</div><div class="foot">{foot}</div></div>', unsafe_allow_html=True)
+                st.button(f"Open {lbl}", key=f"tilebtn_{side}_{tab or 'all'}", on_click=go_side, args=(side, tab))
     if total == 0:
         st.info("No documents yet. Head to **Submit Document** to upload a PO or invoice, "
                 "or open **Controls** to reset or configure the inbox.")
@@ -921,7 +1005,7 @@ elif page == "submit":
     with up_col, st.container(key="card_upload"):
         st.subheader("Upload documents")
         files = st.file_uploader("PDF, image, DOCX, TXT, CSV or XLSX", type=UPLOAD_TYPES, accept_multiple_files=True)
-        if st.button("Run Module 1 and route", type="primary") and files:
+        if st.button("Process documents", type="primary", disabled=not files):
             with st.spinner("Running Module 1..."):
                 for f in sorted(files, key=lambda f: f.name):   # process in file-name order
                     try:
@@ -938,7 +1022,8 @@ elif page == "submit":
             st.caption(f"Automatic fetch: {'ON, every ' + str(mon['poll_seconds']) + ' s' if mon['running'] else 'OFF'}"
                        + (f" | last scan {mon['last_run']}" if mon["last_run"] else "") + " (change on the Controls page).")
         else:
-            st.info("Not connected yet. Add " + ", ".join(em["missing"]) + " to the `.env` file (see `.env.example`), then restart the app.")
+            st.info("Email intake is not connected on this site. Upload documents on the left instead.")
+            st.caption("To connect a mailbox, set " + ", ".join(em["missing"]) + " (Streamlit secrets or `.env`) and restart the app.")
         if st.button("Check inbox now", disabled=not em["ok"]):
             with st.spinner("Reading the inbox..."):
                 try:
@@ -1113,17 +1198,23 @@ elif page == "controls":
     with st.container(key="card_demo"):
         st.subheader("Demo data")
         st.caption(f"Clears the database and processes the {len(list(SAMPLES.glob('*.pdf')))} sample documents, so every "
-                   "stage has example data. The app also does this on its own when it starts with an empty database.")
-        if admin_pin:
-            entered = st.text_input("Admin PIN", type="password", key="admin_pin_entry",
-                                    placeholder="Needed to reset or reload the data")
-        else:
-            entered = ""
+                   "stage has example data. The hosted demo also does this by itself whenever it restarts or is redeployed.")
+        unlocked = bool(admin_pin) and ss.get("admin_unlocked") == admin_pin
+        if not admin_pin:
             st.info("Reset and reload are locked until an `ADMIN_PIN` is set "
                     "(Streamlit Cloud: app Settings → Secrets; locally: the `.env` file).")
-        unlocked = bool(admin_pin) and hmac.compare_digest(entered.encode(), admin_pin.encode())
-        if admin_pin and entered and not unlocked:
-            st.error("Wrong PIN.")
+        elif not unlocked:
+            with st.form("pin_form", border=False):
+                c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
+                entered = c1.text_input("Admin PIN", type="password", placeholder="Needed to reset or reload the data")
+                go = c2.form_submit_button("Unlock")
+            if go and hmac.compare_digest(entered.encode(), admin_pin.encode()):
+                ss.admin_unlocked = admin_pin   # for this browser session only
+                st.rerun()
+            elif go:
+                st.error("Wrong PIN.")
+        else:
+            st.caption("Unlocked for this session.")
         if st.button("Reset & load demo data", type="primary", key="demo_reload", disabled=not unlocked):
             with st.spinner("Loading the demo documents..."):
                 annie.reset_db(con)

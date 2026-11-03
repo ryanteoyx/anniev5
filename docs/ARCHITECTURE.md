@@ -160,8 +160,17 @@ Every state change writes a line to `log`, which is what the Audit Log page show
 * **Streamlit model.** The script reruns on every interaction; per-browser state lives in
   `st.session_state` (current page, opened case, session results, PIN entry). The database is shared
   by all users of the deployment.
-* **Demo auto-load.** `demo_autoload` is wrapped in `st.cache_resource`, so it runs once per process: if
-  the database is empty at start, it ingests `samples/*.pdf` through the normal upload path.
+* **Demo auto-load.** `demo_autoload` is wrapped in `st.cache_resource`, so it runs once per process
+  (and again when its code changes). On Streamlit Community Cloud it resets the database and ingests
+  `samples/*.pdf` through the normal upload path, so every restart or redeploy opens a clean demo;
+  locally it only fills an empty database (see `DEMO_AUTOLOAD`).
+* **What is cached.** Database reads take well under a millisecond, so they are not cached; caching
+  them would only risk stale lists. PDF previews are the expensive part: `pdf_pages` renders each page
+  to a PNG once with PyMuPDF (`st.cache_data`, keyed on path and modification time) and the browser
+  shows plain images instead of running a PDF viewer on every rerun.
+* **Forms.** Inputs that belong to one action (manual match table and reason, Unmatch, Dismiss, the
+  Call-Off reason, the admin PIN, GR/SES batches) sit in `st.form`, so editing them does not rerun the
+  page until the action button is pressed.
 
 ## 7. The UI layer: app.py
 
@@ -175,9 +184,22 @@ Processing, Documents, Complete Archive, Audit Log and Controls. Navigation is h
 cells that render as plain text, so values such as "-" never turn into Markdown), `page_head` (detail
 header), `pretty` and `_label` (readable column names), `nice` and `md` (display-safe codes and file names).
 
+**Navigation and flow.** The sidebar follows the AP process: Dashboard, then *Workflow* (Submit Document,
+Intake Review, Processing, Complete Archive), *Records* (Documents, Audit Log) and *Admin* (Controls).
+Processing tabs run Stage 1, Call-Offs, Stage 2, Stage 3, because a confirmed Call-Off moves to Stage 2.
+Each dashboard figure is a button that opens the page or stage holding those items.
+
 **Design system.** All colours are CSS custom properties on `:root`: a neutral scale, one blue accent,
-and green, amber and red used only for status. Status pills have three meanings: needs action (amber),
-done (green) and in progress (neutral). Streamlit's theme in `.streamlit/config.toml` uses the same values.
+and green, amber and red used only for status. The accent marks where you are (current page, active
+stage, chosen items) and links. Status pills have three meanings: needs action (amber), done (green)
+and in progress (neutral); dashboard figures use the same colours, and only when the count is above
+zero. Notes carry a thin left strip in their colour. Streamlit's theme in `.streamlit/config.toml`
+uses the same values.
+
+**Icons.** Streamlit draws icons as ligatures in the Material Symbols font, so before that font loads
+an icon reads as its name (for example `keyboard_double_arrow_right`). The stylesheet keeps icons
+transparent and one glyph wide until a small script confirms the font has loaded, and the sidebar
+open/close buttons draw their own chevrons, so they never depend on the font.
 
 **Styling hooks.** Streamlit adds a `st-key-<key>` class to keyed elements; the stylesheet uses these
 as stable hooks:
@@ -191,6 +213,8 @@ as stable hooks:
 | `card_*` | White section cards (`card_danger` for the reset area) |
 | `detail_cols` | Detail-page columns that stack on tablets |
 | `polink_*`, `reset_db`, `demo_reload` | PO/PR links and the admin buttons |
+| `tiles`, `tile_*`, `tilebtn_*` | Dashboard figures; the button is stretched invisibly over its card |
+| `preview_*` | Scrolling PDF preview panes |
 
 **Responsive rules.** At 1,024 px and below, detail pages stack; at 768 px and below, the sidebar is a
 drawer that closes after a page is chosen (a small script added with `st.html`); at 640 px and below,
@@ -204,7 +228,7 @@ Settings come from Streamlit secrets (on Community Cloud) or environment variabl
 | Setting | Default | Purpose |
 |---|---|---|
 | `ADMIN_PIN` | not set | Unlocks *Reset & load demo data* and *Reset database*. Without it both stay locked. |
-| `DEMO_AUTOLOAD` | `1` | Load the sample documents when the database is empty at start. `0` turns it off. |
+| `DEMO_AUTOLOAD` | `reset` on Community Cloud, `1` elsewhere | At start: `reset` clears the database and loads the sample documents; `1` loads them only into an empty database; `0` never. |
 | `EMAIL_HOST`, `EMAIL_ADDRESS`, `EMAIL_PASSWORD` | not set | IMAP account for email intake (all three required) |
 | `EMAIL_PORT` | `993` | IMAP over SSL |
 | `EMAIL_MAILBOX` | `INBOX` | Folder to scan |
@@ -226,7 +250,8 @@ the OCR system libraries. Each push to the branch redeploys automatically.
   also calls GitHub's enable-workflow API, because GitHub pauses scheduled workflows in public
   repositories after 60 days without activity (any push also resets that clock).
 * **Storage is not persistent.** The database and stored files reset when the container restarts. Demo
-  auto-load refills an empty database with the sample set, so the demo never opens blank.
+  auto-load resets to the sample set whenever the app starts or is redeployed, so the demo never opens
+  blank or half-used. Changes visitors make last until the next restart, or until *Reset & load demo data*.
 * **Access.** The app is public. Visitors can browse, open cases and upload; destructive admin actions
   need the PIN.
 
