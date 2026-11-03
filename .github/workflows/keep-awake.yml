@@ -1,0 +1,41 @@
+name: Keep Streamlit app awake
+
+on:
+  schedule:
+    - cron: "17 */4 * * *"   # every 4 hours; Community Cloud sleeps apps after 12 hours without traffic
+  workflow_dispatch:          # "Run workflow" button for a manual check
+
+permissions:
+  contents: read
+  actions: write              # lets the last step stop GitHub auto-disabling this schedule
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_URL: https://annie-ryanteoyx.streamlit.app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install headless browser
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Open the app (and wake it if asleep)
+        run: python scripts/keep_awake.py
+      - name: Save screenshot of the failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: keep-awake-screenshot
+          path: keep-awake.png
+          if-no-files-found: ignore
+      # GitHub pauses scheduled workflows in public repos after 60 days without repo activity.
+      - name: Keep this schedule enabled
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/keep-awake.yml/enable"

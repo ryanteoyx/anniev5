@@ -1,16 +1,3 @@
----
-title: Annie
-emoji: 📄
-colorFrom: blue
-colorTo: indigo
-sdk: streamlit
-sdk_version: 1.66.1
-python_version: "3.11"
-app_file: app.py
-pinned: false
-short_description: Invoice & PO intake with 3-way matching
----
-
 # Annie
 
 Annie is a document-intake and **3-way matching** tool for accounts payable. It ingests
@@ -55,6 +42,20 @@ The app opens at http://localhost:8501.
 
 Use **Controls → Load sample documents** (requires pre-extracted JSONs) or the
 **Submit Document** page to upload a file from `samples/` and watch it flow through matching.
+
+## Deploy (Streamlit Community Cloud, free)
+
+Deploy from share.streamlit.io: repository `ryanteoyx/anniev5`, branch `ui-polish`, main file
+`app.py`, Python 3.11. `packages.txt` installs Tesseract and the OCR system libraries.
+
+Community Cloud puts apps to sleep after 12 hours without traffic. The
+[`Keep Streamlit app awake`](.github/workflows/keep-awake.yml) GitHub Action opens the app in a
+headless browser every 4 hours (pressing the wake-up button if needed) via
+[`scripts/keep_awake.py`](scripts/keep_awake.py). If the app fails to come up, the run fails and
+GitHub emails you. Update `APP_URL` in the workflow if the app's address changes.
+
+Note: Community Cloud's disk is not persistent — the SQLite database and uploaded files reset
+whenever the app restarts. For durable data, see [`deploy/`](deploy/) (self-hosted VM).
 
 ## Optional: email intake
 
