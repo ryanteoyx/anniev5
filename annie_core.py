@@ -92,6 +92,7 @@ S_GR, S_DONE, S_ARCHIVED = "Pending GR/SES", "Complete", "Archived"
 # --- Module 1 statuses and routes
 M1_READY, M1_GAPS = "READY_FOR_MODULE_2", "READY_WITH_GAPS"
 M1_REVIEW, M1_UNREADABLE, M1_UNSUPPORTED = "UNCLASSIFIED_ERROR", "UNREADABLE_DOCUMENT", "UNSUPPORTED_DOCUMENT"
+M1_DUP_REF = "DUPLICATE_REFERENCE"   # passed Module 1, but Module 2 already holds its PO/PR reference or invoice number
 R_M2, R_REVIEW = "MODULE_2", "INTAKE_REVIEW"
 R_DUP_FILE, R_DUP_CONTENT = "REJECTED_DUPLICATE_FILE", "REJECTED_DUPLICATE_CONTENT"
 
@@ -669,8 +670,9 @@ def parse_amount_and_currency(value):
     text = str(value).strip()
     cm = re.search(r"\b(SGD|USD|EUR|GBP|MYR|AUD|JPY|CNY)\b", text, re.I)
     currency = cm.group(1).upper() if cm else None
-    if currency is None:
-        currency = "SGD" if "S$" in text else "USD" if "$" in text else "EUR" if "€" in text else "GBP" if "£" in text else None
+    if currency is None:   # a bare "$" is ambiguous (SGD, USD, AUD...), so it gives no currency rather than a guess
+        currency = ("USD" if "US$" in text else "SGD" if "S$" in text else "EUR" if "€" in text
+                    else "GBP" if "£" in text else None)
     nm = re.search(r"\(?-?\d[\d,]*(?:\.\d{1,2})?\)?", text)
     if not nm:
         return None, currency
@@ -689,6 +691,26 @@ def find_total_anywhere(text):
     """Fallback when a total is printed mid-line (merged columns): last 'Total ... 0.00' occurrence."""
     hits = _TOTAL_ANY.findall(str(text))
     return hits[-1].strip() if hits else None
+
+_SUBTOTAL_LINE = re.compile(r"^\s*sub\s*-?\s*total\b(?P<rest>[^\n]*)$", re.I | re.M)
+_TAX_LINE = re.compile(r"^\s*(?:gst|vat|sales\s+tax|tax)\b(?P<rest>[^\n]*)$", re.I | re.M)
+_NOT_A_TAX_AMOUNT = re.compile(r"\b(?:reg(?:istration)?|no|number|id|invoice)\b", re.I)   # 'GST Reg No ...', 'Tax Invoice'
+_LINE_END_AMOUNT = re.compile(r"([\d,]+\.\d{2})\s*$")
+
+def find_subtotal_and_tax(text):
+    """Subtotal and tax (GST/VAT) when the document prints them on their own lines, e.g. 'Subtotal 3,000.00' and
+    'GST 9%: SGD 270.00'. Returns (subtotal, tax); either is None when not printed."""
+    def last_amount(pattern, skip=None):
+        found = None
+        for m in pattern.finditer(str(text)):
+            rest = m.group("rest")
+            if skip is not None and skip.search(rest):
+                continue
+            a = _LINE_END_AMOUNT.search(rest)
+            if a:
+                found = _num(a.group(1))
+        return found
+    return last_amount(_SUBTOTAL_LINE), last_amount(_TAX_LINE, _NOT_A_TAX_AMOUNT)
 
 def _render_pages(path: Path, max_pages=3):
     """Render pages to images so digital PDFs and scans are treated the same way."""
@@ -815,10 +837,11 @@ def extract_fields_from_text(path: Path, text, method, ocr_used, config, profile
     if total is None and priced:
         total = round(sum(priced), 2)
     explicit_currency = get("currency")
+    subtotal, tax = find_subtotal_and_tax(text)
     return dict(
         doc_type=dtype, vendor_name=get("supplier") or guess_supplier(text),
         po_reference=po_ref, invoice_reference=inv_ref, date=get("document_date") or first_date_in_text(text),
-        total=total, currency=explicit_currency or currency,
+        total=total, subtotal=subtotal, tax=tax, currency=explicit_currency or currency,
         cost_centre=get("cost_centre") if dtype == PO else None,
         approver_name=get("approver_name") if dtype == PO else None,
         approver_title=get("approver_title") if dtype == PO else None,
@@ -842,6 +865,7 @@ TABLE_ALIASES = {
     "po_number": "po_reference", "po no": "po_reference", "po_no": "po_reference",
     "document date": "date", "document_date": "date", "invoice date": "date", "invoice_date": "date", "date": "date",
     "total": "total", "total amount": "total", "total_amount": "total", "amount": "total", "currency": "currency",
+    "subtotal": "subtotal", "sub total": "subtotal", "sub_total": "subtotal", "tax": "tax", "gst": "tax", "vat": "tax",
     "cost centre": "cost_centre", "cost_centre": "cost_centre", "approver name": "approver_name",
     "approver_name": "approver_name", "approver title": "approver_title", "approver_title": "approver_title",
     "prepared by": "prepared_by", "prepared_by": "prepared_by", "prepared by title": "prepared_by_title",
@@ -925,7 +949,8 @@ def clean_record(raw: dict, fingerprint=None, source_hash=None) -> dict:
         doc_type=dtype, vendor_name=_clean_text(raw.get("vendor_name") or raw.get("supplier")),
         po_reference=po_ref, invoice_reference=inv_ref, po_references=[_clean_ref(x) for x in (raw.get("po_references") or []) if _clean_ref(x)],
         date=standardise_date(raw.get("date") or raw.get("document_date")),
-        total=total, currency=(_clean_text(raw.get("currency")) or "").upper() or None,
+        total=total, subtotal=standardise_amount(raw.get("subtotal")), tax=standardise_amount(raw.get("tax")),
+        currency=(_clean_text(raw.get("currency")) or "").upper() or None,
         cost_centre=_clean_text(raw.get("cost_centre")), approver_name=_clean_text(raw.get("approver_name")),
         approver_title=_clean_text(raw.get("approver_title")), prepared_by=_clean_text(raw.get("prepared_by")),
         prepared_by_title=_clean_text(raw.get("prepared_by_title")), category=_clean_text(raw.get("category")),
@@ -954,7 +979,7 @@ def clean_record(raw: dict, fingerprint=None, source_hash=None) -> dict:
 
 def to_module2_payload(rec: dict) -> dict:
     """Module 1 record -> the JSON that Module 2 expects."""
-    keys = ["record_id", "doc_type", "vendor_name", "date", "total", "currency", "items", "service_description"]
+    keys = ["record_id", "doc_type", "vendor_name", "date", "total", "subtotal", "tax", "currency", "items", "service_description"]
     out = {k: rec.get(k) for k in keys}
     if rec["doc_type"] == PO:
         out.update({k: rec.get(k) for k in ("po_reference", "cost_centre", "approver_name", "approver_title",
@@ -979,6 +1004,21 @@ def _save_intake_row(con, rec, channel, file_path, route, resolved=False):
                  json.dumps(rec.get("missing_fields", [])), rec.get("intake_note"), _now(), _now() if resolved else None))
     return rid
 
+def _hand_to_module2(con, rid: str, payload: dict, file_path) -> tuple[dict, str | None]:
+    """Pass a ready record to Module 2. If Module 2 refuses it (its PO/PR reference or invoice number is already
+    in Annie), move it to Intake Review with the reason instead of leaving it nowhere: a person can then dismiss
+    it, which also frees the file to be submitted again. Returns (Module 2 result, review note or None)."""
+    m2 = process_document(con, payload, file_path=str(file_path) if file_path else None)
+    if not str(m2.get("outcome", "")).startswith("REJECTED_"):
+        return m2, None
+    note = (f"{m2.get('detail', 'Already in Annie')}. Module 2 did not accept it. Dismiss it if it is a duplicate; "
+            "if the number was misread or reissued, correct the document and submit it again.")
+    con.execute("UPDATE intake SET route=?, m1_status=?, note=?, resolved_at=NULL WHERE record_id=?",
+                (R_REVIEW, M1_DUP_REF, note, rid))
+    _log(con, rid, None, "ROUTED_TO_INTAKE_REVIEW", f"{M1_DUP_REF}: {m2.get('detail', '')}", "MODULE 1")
+    con.commit()
+    return m2, note
+
 def route_record(con, rec, channel, file_path) -> dict:
     """Routing decision: only READY_FOR_MODULE_2 enters Annie; everything else goes to Intake Review."""
     ready = rec["processing_status"] == M1_READY
@@ -991,7 +1031,10 @@ def route_record(con, rec, channel, file_path) -> dict:
         _log(con, rid, None, "ROUTED_TO_MODULE_2", "READY_FOR_MODULE_2", "MODULE 1")
         payload = to_module2_payload(rec)
         payload["record_id"] = rid
-        result.update(route=R_M2, m2=process_document(con, payload, file_path=str(file_path)))
+        m2, review_note = _hand_to_module2(con, rid, payload, file_path)
+        result.update(route=R_M2, m2=m2)
+        if review_note:
+            result.update(route=R_REVIEW, m1_status=M1_DUP_REF, note=review_note)
     else:
         _log(con, rid, None, "ROUTED_TO_INTAKE_REVIEW", f"{rec['processing_status']}: {rec['intake_note']}", "MODULE 1")
         result.update(route=R_REVIEW)
@@ -1288,7 +1331,9 @@ def recheck_intake(con, record_id: str, edits: dict) -> dict:
                   missing=rec["missing_fields"], route=R_M2 if ready else R_REVIEW, source_file=row["source_file"])
     if ready:
         _log(con, record_id, None, "ROUTED_TO_MODULE_2", "READY_FOR_MODULE_2 after review", "MODULE 1")
-        result["m2"] = process_document(con, to_module2_payload(rec), file_path=row["file_path"])
+        result["m2"], review_note = _hand_to_module2(con, record_id, to_module2_payload(rec), row["file_path"])
+        if review_note:
+            result.update(route=R_REVIEW, m1_status=M1_DUP_REF, note=review_note)
     con.commit()
     return result
 
@@ -1353,6 +1398,15 @@ def num_sim(a, b):
         return 1.0
     return max(0.0, 1 - abs(a - b) / max(abs(a), abs(b)) * 10)   # a 10% gap scores 0
 
+def _currency(d) -> str | None:
+    """The document's currency code (upper case), or None when it states none."""
+    c = str(d.get("currency") or "").strip().upper()
+    return c or None
+
+def _same_currency(a, b) -> bool:
+    """Currencies are compared only when both documents state one; an unknown currency never blocks a match."""
+    return a is None or b is None or a == b
+
 def parse_date(s):
     for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y"):
         try:
@@ -1369,6 +1423,24 @@ def doc_total(d):
         return round(sum(float(i.get("total", 0)) for i in items), 2) if items else None
     except (TypeError, ValueError):
         return None
+
+def net_total(d):
+    """The amount before tax when the document states it (its subtotal, or its total minus GST/VAT); otherwise
+    the total. PO/PR balances are billed in these terms, so an invoice that adds tax to a PO/PR amount written
+    without tax is not mistaken for overbilling. The gross total is still what the app displays."""
+    total = doc_total(d)
+    try:
+        sub, tax = float(d.get("subtotal") or 0), float(d.get("tax") or 0)
+        gross = float(total) if total not in (None, "") else None
+    except (TypeError, ValueError):
+        return total
+    if gross is None:
+        return round(sub, 2) if sub > 0 else total
+    if 0 < sub <= gross + 0.005:
+        return round(sub, 2)
+    if 0 < tax < gross:
+        return round(gross - tax, 2)
+    return total
 
 def weighted(scores: dict, weights: dict) -> float:
     use = {k: s for k, s in scores.items() if s is not None}   # missing fields do not penalise
@@ -1466,7 +1538,7 @@ def _po_lines(po: dict) -> list[dict]:
     if str(po.get("category", "")).lower().startswith("good") and items:
         return [dict(description=i.get("description"), basis="QTY", ordered_qty=float(i["qty"]),
                      unit_price=float(i["unit_price"]), ordered_amount=float(i["total"])) for i in items]
-    total = float(doc_total(po) or 0)
+    total = float(net_total(po) or 0)   # billed before tax (see net_total)
     if total > 0:   # services that cite an amount: tracked by amount (many invoices allowed)
         return [dict(description=po.get("service_description") or "", basis="AMOUNT", ordered_qty=1.0,
                      unit_price=total, ordered_amount=total)]
@@ -1479,7 +1551,7 @@ def _invoice_lines(p: dict) -> list[dict]:
     if items:
         return [dict(description=i.get("description"), qty=float(i.get("qty") or 0), unit_price=float(i.get("unit_price") or 0),
                      amount=float(i.get("total") or 0), po=_ref_norm(i.get("po_reference"))) for i in items]
-    total = float(doc_total(p) or 0)
+    total = float(net_total(p) or 0)   # item totals are already before tax; a whole-invoice amount is made net here
     return [dict(description=p.get("service_description"), qty=1.0, unit_price=total, amount=total, po="")]
 
 def _cited(p: dict) -> dict:
@@ -1554,10 +1626,12 @@ def allocate_invoice(con, case_id: str, force: bool = False) -> dict:
         con.execute("UPDATE cases SET hold=0 WHERE case_id=?", (case_id,))
     inv = get_doc(con, case["inv_record_id"])
     p, lines, cited = inv["payload"], _invoice_lines(inv["payload"]), _cited(inv["payload"])
+    inv_cur = _currency(p)
     po_lines = []
     for r in con.execute("SELECT l.*, d.payload AS po_payload FROM po_lines l JOIN documents d ON d.record_id=l.po_record_id ORDER BY l.line_id"):
         d = dict(r)
-        d["vendor"] = json.loads(d.pop("po_payload")).get("vendor_name")
+        po = json.loads(d.pop("po_payload"))
+        d["vendor"], d["currency"] = po.get("vendor_name"), _currency(po)
         po_lines.append(d)
     reasons, plan = [], []
     known = {_ref_norm(l["po_reference"]) for l in po_lines}
@@ -1573,11 +1647,14 @@ def allocate_invoice(con, case_id: str, force: bool = False) -> dict:
         local = {l["line_id"]: _open(l) for l in po_lines}
         for ln in lines:
             allowed = {ln["po"]} if ln["po"] else (set(cited) if cited else None)
-            scored = []
+            scored, other_currency = [], set()
             for l in po_lines:
                 if (text_sim(p.get("vendor_name"), l["vendor"]) or 0) < VENDOR_MIN or local[l["line_id"]] <= 1e-9:
                     continue
                 if allowed is not None and _ref_norm(l["po_reference"]) not in allowed:
+                    continue
+                if not _same_currency(inv_cur, l["currency"]):   # never bill one currency against another
+                    other_currency.add((l["po_reference"], l["currency"]))
                     continue
                 is_cited = _ref_norm(l["po_reference"]) in cited or ln["po"] == _ref_norm(l["po_reference"])
                 sole = sum(1 for x in po_lines if x["po_record_id"] == l["po_record_id"] and local[x["line_id"]] > 1e-9) == 1
@@ -1586,8 +1663,12 @@ def allocate_invoice(con, case_id: str, force: bool = False) -> dict:
             good = [t for t in scored if t[0] >= LINK_THRESHOLD]
             label = (ln["description"] or "")[:40]
             if not good:
+                currency_note = (", ".join(f"{ref} is in {cur}" for ref, cur in sorted(other_currency))
+                                 + f" but the invoice is in {inv_cur}") if other_currency else ""
                 if scored:
-                    why = f" (best {scored[0][0]:.2f})"
+                    why = f" (best {scored[0][0]:.2f})" + (f"; {currency_note}" if currency_note else "")
+                elif other_currency:
+                    why = f": {currency_note}"
                 else:
                     spent = sorted({l["po_reference"] for l in po_lines if (allowed is None or _ref_norm(l["po_reference"]) in allowed)
                                     and (text_sim(p.get("vendor_name"), l["vendor"]) or 0) >= VENDOR_MIN})
@@ -1914,19 +1995,21 @@ def _po_line_universe(con) -> dict:
     out = {}
     for r in con.execute("SELECT l.*, d.payload AS po_payload FROM po_lines l JOIN documents d ON d.record_id=l.po_record_id ORDER BY l.line_id"):
         d = dict(r)
-        d["vendor"] = json.loads(d.pop("po_payload")).get("vendor_name")
+        po = json.loads(d.pop("po_payload"))
+        d["vendor"], d["currency"] = po.get("vendor_name"), _currency(po)
         out[d["line_id"]] = d
     return out
 
 def manual_candidates(con, case_id: str) -> list[dict]:
     """PO/PR lines that still have something left to bill, most similar vendor first (for the manual-match picker)."""
     c = con.execute("SELECT * FROM cases WHERE case_id=?", (case_id,)).fetchone()
-    vendor = get_doc(con, c["inv_record_id"])["payload"].get("vendor_name")
+    inv = get_doc(con, c["inv_record_id"])["payload"]
+    vendor, inv_cur = inv.get("vendor_name"), _currency(inv)
     unit = {"QTY": "qty", "AMOUNT": "amount", "SINGLE": "single invoice"}
     out = []
     for l in _po_line_universe(con).values():
         left = _open(l)
-        if left <= (1e-9 if l["basis"] in ("QTY", "SINGLE") else 0.005):
+        if left <= (1e-9 if l["basis"] in ("QTY", "SINGLE") else 0.005) or not _same_currency(inv_cur, l["currency"]):
             continue
         vs = text_sim(vendor, l["vendor"]) or 0.0
         out.append(dict(line_id=l["line_id"], po_reference=l["po_reference"], vendor=l["vendor"], description=l["description"],
@@ -1969,6 +2052,9 @@ def manual_match(con, case_id: str, rows: list[dict], reason: str = "", dry_run:
             continue
         ln, l = lines[i - 1], pol[pid]
         label = f"line {i} -> {l['po_reference']} '{(l['description'] or '')[:30]}'"
+        if not _same_currency(_currency(p), l["currency"]):
+            errors.append(f"{label}: the PO/PR is in {l['currency']} but the invoice is in {_currency(p)}")
+            continue
         if l["basis"] == "QTY":
             need, qty, frac = v, v, (v / ln["qty"] if ln["qty"] else 1.0)
             amount = round(ln["amount"] * frac, 2)
@@ -2114,6 +2200,8 @@ def confirm_calloff(con, case_id: str, inv_case_ids: list, reason: str) -> dict:
         vs = text_sim(po.get("vendor_name"), p.get("vendor_name")) or 0.0
         if vs < VENDOR_MIN:
             warns.append(f"{i}: vendor name looks different (similarity {vs:.2f})")
+        if not _same_currency(_currency(po), _currency(p)):
+            warns.append(f"{i}: invoice is in {_currency(p)} but the PO/PR is in {_currency(po)}")
     now = _now()
     for r in rows:
         con.execute("INSERT INTO calloff_invoices(case_id, inv_case_id, inv_record_id, added_at) VALUES(?,?,?,?)",

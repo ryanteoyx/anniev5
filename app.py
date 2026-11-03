@@ -982,11 +982,12 @@ elif page == "review":
                 if b2.button("Dismiss", key=f"dis_{k}"):
                     annie.dismiss_intake(con, k, "Dismissed from Intake Review")
                     st.rerun()
-                st.markdown("**Missing fields**")
                 if r["missing"]:
+                    st.markdown("**Missing fields**")
                     st.markdown("\n".join(f"- {annie.LABELS.get(m, m)}" for m in r["missing"]))
                 else:
-                    st.write("None listed - " + str(r["note"]))
+                    st.markdown("**Why it is here**")
+                    st.write(str(r["note"]))
 
 
 # =====================================================================================

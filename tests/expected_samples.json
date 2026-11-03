@@ -1,0 +1,274 @@
+{
+  "cases": {
+    "CALL-2026-0001": {
+      "invoice": "-",
+      "po": "PR-2026-0330",
+      "reason": "",
+      "score": null,
+      "status": "Open - Call-Off"
+    },
+    "CALL-2026-0002": {
+      "invoice": "-",
+      "po": "PR-2026-0391",
+      "reason": "",
+      "score": null,
+      "status": "Open - Call-Off"
+    },
+    "CASE-2026-0001": {
+      "invoice": "AOS-INV-31001",
+      "po": "PR-2026-0301",
+      "reason": "",
+      "score": 1.0,
+      "status": "Pending GR/SES"
+    },
+    "CASE-2026-0002": {
+      "invoice": "AOS-INV-31044",
+      "po": "PR-2026-0301",
+      "reason": "",
+      "score": 0.9533,
+      "status": "Pending GR/SES"
+    },
+    "CASE-2026-0003": {
+      "invoice": "BE-2026-014",
+      "po": "PR-2026-0302",
+      "reason": "",
+      "score": 1.0,
+      "status": "Pending GR/SES"
+    },
+    "CASE-2026-0004": {
+      "invoice": "BE-2026-019",
+      "po": "PR-2026-0302",
+      "reason": "",
+      "score": 1.0,
+      "status": "Pending GR/SES"
+    },
+    "CASE-2026-0005": {
+      "invoice": "ZH/26/1230",
+      "po": "PR-2026-0311, PR-2026-0312",
+      "reason": "",
+      "score": 1.0,
+      "status": "Pending GR/SES"
+    },
+    "CASE-2026-0006": {
+      "invoice": "BPM-5601",
+      "po": "PR-2026-0320",
+      "reason": "'Roll-up Banner 85x200cm' bills 4 but PR-2026-0320 has only 3 left to bill",
+      "score": null,
+      "status": "Open - Pending PO/PR"
+    },
+    "CASE-2026-0007": {
+      "invoice": "PG-26-0412",
+      "po": "PR-2026-0330",
+      "reason": "PR-2026-0330 is a Call-Off PO/PR (no amount cited): match it manually from the Call-Offs tab",
+      "score": null,
+      "status": "Open - Pending PO/PR"
+    },
+    "CASE-2026-0008": {
+      "invoice": "PG-26-0455",
+      "po": "PR-2026-0330",
+      "reason": "PR-2026-0330 is a Call-Off PO/PR (no amount cited): match it manually from the Call-Offs tab",
+      "score": null,
+      "status": "Open - Pending PO/PR"
+    },
+    "CASE-2026-0009": {
+      "invoice": "PG-26-0999",
+      "po": "",
+      "reason": "'Pest services Q3' matches no open PO line (no PO/PR for this vendor)",
+      "score": null,
+      "status": "Open - Pending PO/PR"
+    },
+    "CASE-2026-0010": {
+      "invoice": "CB-26-1180",
+      "po": "PR-2026-0370",
+      "reason": "",
+      "score": 0.8649,
+      "status": "Pending GR/SES"
+    },
+    "CASE-2026-0011": {
+      "invoice": "LS-0457",
+      "po": "PR-2026-0381",
+      "reason": "'Corporate photography coverage - annual ' bills 3600 but PR-2026-0381 has only 3000 left to bill",
+      "score": null,
+      "status": "Open - Pending PO/PR"
+    },
+    "CASE-2026-0012": {
+      "invoice": "GG-30417",
+      "po": "PR-2026-0391",
+      "reason": "PR-2026-0391 is a Call-Off PO/PR (no amount cited): match it manually from the Call-Offs tab",
+      "score": null,
+      "status": "Open - Pending PO/PR"
+    }
+  },
+  "counts": {
+    "calloff": 2,
+    "review": 0,
+    "s1": 9,
+    "s2": 6,
+    "s3": 0
+  },
+  "intake": {
+    "P01_PO_PR-2026-0301_Acme_goods.pdf": {
+      "doc_type": "PO",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "REGISTERED",
+      "route": "MODULE_2"
+    },
+    "P02_INV_AOS-INV-31001_Acme_partial1_cites_PO.pdf": {
+      "doc_type": "INVOICE",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "ALLOCATED",
+      "route": "MODULE_2"
+    },
+    "P03_INV_AOS-INV-31044_Acme_partial2_no_PO_cited.pdf": {
+      "doc_type": "INVOICE",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "ALLOCATED",
+      "route": "MODULE_2"
+    },
+    "P04_PO_PR-2026-0302_BrightEdge_services.pdf": {
+      "doc_type": "PO",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "REGISTERED",
+      "route": "MODULE_2"
+    },
+    "P05_INV_BE-2026-014_BrightEdge_milestone1.pdf": {
+      "doc_type": "INVOICE",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "ALLOCATED",
+      "route": "MODULE_2"
+    },
+    "P06_INV_BE-2026-019_BrightEdge_milestone2.pdf": {
+      "doc_type": "INVOICE",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "ALLOCATED",
+      "route": "MODULE_2"
+    },
+    "P07_INV_ZH-26-1230_Zenith_one_invoice_two_POs.pdf": {
+      "doc_type": "INVOICE",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "UNALLOCATED",
+      "route": "MODULE_2"
+    },
+    "P08_PO_PR-2026-0311_Zenith_goods.pdf": {
+      "doc_type": "PO",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "REGISTERED",
+      "route": "MODULE_2"
+    },
+    "P09_PO_PR-2026-0312_Zenith_goods.pdf": {
+      "doc_type": "PO",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "REGISTERED",
+      "route": "MODULE_2"
+    },
+    "P10_PO_PR-2026-0320_BrightPrint_goods.pdf": {
+      "doc_type": "PO",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "REGISTERED",
+      "route": "MODULE_2"
+    },
+    "P11_INV_BPM-5601_BrightPrint_overbilled.pdf": {
+      "doc_type": "INVOICE",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "UNALLOCATED",
+      "route": "MODULE_2"
+    },
+    "P12_PO_PR-2026-0330_PestGuard_service_NO_amount.pdf": {
+      "doc_type": "PO",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "CALLOFF_OPENED",
+      "route": "MODULE_2"
+    },
+    "P13_INV_PG-26-0412_PestGuard_matches_single_PO.pdf": {
+      "doc_type": "INVOICE",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "UNALLOCATED",
+      "route": "MODULE_2"
+    },
+    "P14_INV_PG-26-0455_PestGuard_second_invoice_blocked.pdf": {
+      "doc_type": "INVOICE",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "UNALLOCATED",
+      "route": "MODULE_2"
+    },
+    "P31_INV_PG-26-0999_PestGuard_wording_differs_NO_PO_cited.pdf": {
+      "doc_type": "INVOICE",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "UNALLOCATED",
+      "route": "MODULE_2"
+    },
+    "P60_PO_PR-2026-0370_CoolBreeze_aircon_service.pdf": {
+      "doc_type": "PO",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "REGISTERED",
+      "route": "MODULE_2"
+    },
+    "P61_INV_CB-26-1180_CoolBreeze_NO_PO_cited.pdf": {
+      "doc_type": "INVOICE",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "ALLOCATED",
+      "route": "MODULE_2"
+    },
+    "P62_PO_PR-2026-0381_Lenscape_photography.pdf": {
+      "doc_type": "PO",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "REGISTERED",
+      "route": "MODULE_2"
+    },
+    "P63_INV_LS-0457_Lenscape_OVERBILLED.pdf": {
+      "doc_type": "INVOICE",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "UNALLOCATED",
+      "route": "MODULE_2"
+    },
+    "P64_PO_PR-2026-0391_GreenGrocer_canteen_ingredients_CALLOFF.pdf": {
+      "doc_type": "PO",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "CALLOFF_OPENED",
+      "route": "MODULE_2"
+    },
+    "P65_INV_GG-30417_GreenGrocer_market_price.pdf": {
+      "doc_type": "INVOICE",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "UNALLOCATED",
+      "route": "MODULE_2"
+    }
+  },
+  "po_positions": {
+    "PR-2026-0301": {
+      "billed": 810.0,
+      "open": 0.0,
+      "status": "Fully billed"
+    },
+    "PR-2026-0302": {
+      "billed": 9600.0,
+      "open": 2400.0,
+      "status": "Partly billed"
+    },
+    "PR-2026-0311": {
+      "billed": 1070.0,
+      "open": 0.0,
+      "status": "Fully billed"
+    },
+    "PR-2026-0312": {
+      "billed": 255.0,
+      "open": 0.0,
+      "status": "Fully billed"
+    },
+    "PR-2026-0320": {
+      "billed": 0.0,
+      "open": 405.0,
+      "status": "Open - Pending Invoice"
+    },
+    "PR-2026-0370": {
+      "billed": 2400.0,
+      "open": 0.0,
+      "status": "Fully billed"
+    },
+    "PR-2026-0381": {
+      "billed": 0.0,
+      "open": 3000.0,
+      "status": "Open - Pending Invoice"
+    }
+  }
+}
