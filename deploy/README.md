@@ -12,7 +12,7 @@ serverless host. This folder sets one up on Ubuntu 24.04 (Ampere/ARM, Always Fre
 
 - Code: `/opt/annie/app` (a clone of this repo's `ui-polish` branch)
 - Python env: `/opt/annie/venv`
-- Data: `/opt/annie/app/annie_v4.db` and `/opt/annie/app/storage/` — on the VM's disk, so they survive restarts
+- Data: `/opt/annie/app/annie_v4.db` and `/opt/annie/app/storage/`, on the VM's disk, so they survive restarts
 - Email intake (optional): put the `EMAIL_*` settings in `/opt/annie/app/.env`, then `sudo systemctl restart annie`
 
 Caddy terminates HTTPS on ports 80/443 and proxies to Streamlit (websockets included).
