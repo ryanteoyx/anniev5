@@ -660,6 +660,8 @@ hr {border-color:#e6e9ef; margin:1.4rem 0;}
 [class*="st-key-side_"] button {width:100%; justify-content:flex-start; text-align:left; border-radius:8px; padding:.6rem 1rem;
     margin:0 0 3px 0; font-weight:500; background:transparent; color:#c9d4e3; border:1px solid transparent; box-shadow:none;}
 [class*="st-key-side_"] button p {color:inherit; margin:0; width:100%; text-align:left;}
+/* Streamlit wraps the label in flex boxes that centre it; keep nav labels left-aligned in the full-width button */
+[class*="st-key-side_"] button > div, [class*="st-key-side_"] button > div > span {justify-content:flex-start; width:100%;}
 [class*="st-key-side_"] button[kind="secondary"]:hover {background:#223454; border-color:#31497a; color:#ffffff;}
 [class*="st-key-side_"] button[kind="primary"] {background:#0c1626; color:#ffffff; border:1px solid #060d18;
     border-left:4px solid #4da3ff; box-shadow:inset 0 3px 8px rgba(0,0,0,.6);}
