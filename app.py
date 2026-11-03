@@ -489,16 +489,73 @@ side_badge = {"review": pending["review"], "processing": pending["s1"] + pending
 
 st.markdown("""
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* ---- Base typography & canvas ---------------------------------------- */
+html, body, [class*="st-"], .stMarkdown, button, input, textarea, select {
+    font-family:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;}
+.stApp {background:#f6f7f9;}
+.block-container {max-width:1240px; padding-top:2.2rem; padding-bottom:4rem;}
+[data-testid="stToolbar"], [data-testid="stDecoration"], footer, #MainMenu {visibility:hidden; height:0;}
+
+/* ---- Headings -------------------------------------------------------- */
+.main h1, .main h2 {color:#0f172a; font-weight:700; letter-spacing:-.02em;}
+.main h2 {font-size:1.9rem; margin-bottom:.2rem;}
+.main h3 {color:#1e293b; font-weight:600; letter-spacing:-.01em; font-size:1.15rem; margin-top:.4rem;}
+.main h4 {color:#334155; font-weight:600; font-size:.95rem; text-transform:uppercase; letter-spacing:.04em;}
+hr {border-color:#e6e9ef; margin:1.4rem 0;}
+
+/* ---- Buttons --------------------------------------------------------- */
+.main .stButton button[kind="primary"] {background:#2563eb; border:1px solid #2563eb; border-radius:8px;
+    font-weight:600; box-shadow:0 1px 2px rgba(37,99,235,.25);}
+.main .stButton button[kind="primary"]:hover {background:#1d4ed8; border-color:#1d4ed8;}
+.main .stButton button[kind="secondary"] {border-radius:8px; border:1px solid #d6dbe4; color:#334155; font-weight:500;}
+.main .stButton button[kind="secondary"]:hover {border-color:#2563eb; color:#1d4ed8; background:#f0f5ff;}
+
+/* ---- Inputs ---------------------------------------------------------- */
+[data-testid="stFileUploaderDropzone"] {background:#fbfcfe; border:1.5px dashed #c6cedb; border-radius:12px;}
+.main [data-baseweb="select"] > div, .main .stTextInput input, .main .stNumberInput input {border-radius:8px;}
+
+/* ---- Alerts / dataframe ---------------------------------------------- */
+[data-testid="stAlert"] {border-radius:10px;}
+[data-testid="stDataFrame"] {border:1px solid #e6e9ef; border-radius:12px; overflow:hidden;}
+
+/* ---- Dashboard stat cards ------------------------------------------- */
+.stat-grid {display:grid; grid-template-columns:repeat(auto-fit, minmax(176px, 1fr)); gap:16px; margin:.4rem 0 1.4rem 0;}
+.stat-card {background:#ffffff; border:1px solid #e6e9ef; border-radius:14px; padding:18px 20px;
+    box-shadow:0 1px 2px rgba(16,24,40,.04); transition:box-shadow .15s, transform .15s;}
+.stat-card:hover {box-shadow:0 6px 18px rgba(16,24,40,.08); transform:translateY(-1px);}
+.stat-card .label {color:#64748b; font-size:.74rem; font-weight:600; text-transform:uppercase; letter-spacing:.05em;}
+.stat-card .value {color:#0f172a; font-size:2.1rem; font-weight:700; line-height:1.15; margin-top:.35rem; letter-spacing:-.02em;}
+.stat-card .foot {color:#94a3b8; font-size:.78rem; margin-top:.2rem;}
+.stat-card.accent {border-top:3px solid #2563eb;}
+.stat-card.amber {border-top:3px solid #f59e0b;}
+.stat-card.green {border-top:3px solid #16a34a;}
+.stat-card.slate {border-top:3px solid #64748b;}
+
+/* ---- Status pills ---------------------------------------------------- */
+.pill {display:inline-block; padding:2px 10px; border-radius:999px; font-size:.75rem; font-weight:600; line-height:1.5;}
+.pill.green {background:#e7f6ec; color:#157347;}
+.pill.amber {background:#fdf3e2; color:#b7791f;}
+.pill.red {background:#fdeaea; color:#c0392b;}
+.pill.blue {background:#e8f0fe; color:#1d4ed8;}
+.pill.slate {background:#eef1f5; color:#475569;}
+
+/* ---- Hint / lead paragraph ------------------------------------------ */
+.lead {color:#475569; font-size:.95rem; line-height:1.55; background:#eef2f9; border:1px solid #e2e8f3;
+    border-radius:12px; padding:14px 16px; margin-bottom:1rem;}
+
+/* ---- Sidebar (kept, lightly refined) -------------------------------- */
 [data-testid="stSidebar"] {background:#16233a;}
-[data-testid="stSidebar"] h3 {color:#ffffff; letter-spacing:.6px; padding:.2rem .4rem 1rem .4rem;}
-[class*="st-key-side_"] button {width:100%; justify-content:flex-start; text-align:left; border-radius:3px; padding:.6rem 1rem;
-    margin:0 0 2px 0; font-weight:500; background:transparent; color:#c9d4e3; border:1px solid transparent; box-shadow:none;}
+[data-testid="stSidebar"] h3 {color:#ffffff; letter-spacing:.6px; padding:.2rem .4rem 1rem .4rem; font-weight:700;}
+[class*="st-key-side_"] button {width:100%; justify-content:flex-start; text-align:left; border-radius:8px; padding:.6rem 1rem;
+    margin:0 0 3px 0; font-weight:500; background:transparent; color:#c9d4e3; border:1px solid transparent; box-shadow:none;}
 [class*="st-key-side_"] button p {color:inherit; margin:0; width:100%; text-align:left;}
 [class*="st-key-side_"] button[kind="secondary"]:hover {background:#223454; border-color:#31497a; color:#ffffff;}
 [class*="st-key-side_"] button[kind="primary"] {background:#0c1626; color:#ffffff; border:1px solid #060d18;
     border-left:4px solid #4da3ff; box-shadow:inset 0 3px 8px rgba(0,0,0,.6);}
 [class*="st-key-side_"] button[kind="primary"]:hover {background:#0c1626; color:#ffffff; border-color:#060d18; border-left-color:#4da3ff;}
-[class*="st-key-ptab_"] button {width:100%; border-radius:3px; padding:.6rem .8rem; font-weight:500; background:#f1f4f8;
+[class*="st-key-ptab_"] button {width:100%; border-radius:8px; padding:.6rem .8rem; font-weight:500; background:#f1f4f8;
     color:#33445c; border:1px solid #c5cfdc; box-shadow:0 1px 0 #ffffff inset, 0 1px 2px rgba(0,0,0,.08);}
 [class*="st-key-ptab_"] button p {color:inherit; margin:0;}
 [class*="st-key-ptab_"] button[kind="secondary"]:hover {background:#e6ecf4; border-color:#9fb1c8; color:#1b2a41;}
@@ -594,7 +651,31 @@ st.header(PAGE_TITLES[page])
 # 6. PAGE: SUBMIT DOCUMENT (manual upload + email intake, both run Module 1 first)
 # =====================================================================================
 if page == "dashboard":
-    pass   # intentionally empty for now
+    docs = annie.list_documents(con)
+    total = len(docs)
+    allocated = sum(1 for d in docs if (d.get("module2_outcome") or "") in ("ALLOCATED", "REGISTERED"))
+    tiles = [
+        ("Documents processed", total, "across all channels", "accent"),
+        ("Needs review", pending["review"], "waiting in Intake Review", "amber"),
+        ("Open cases", pending["s1"], "invoices & POs awaiting match", "blue"),
+        ("Pending GR/SES", pending["s2"], "awaiting goods receipt", "slate"),
+        ("Complete", pending["s3"], "fully matched & archived", "green"),
+        ("Call-offs", pending["calloff"], "open call-off agreements", "slate"),
+    ]
+    cards = "".join(
+        f'<div class="stat-card {cls}"><div class="label">{lbl}</div>'
+        f'<div class="value">{val}</div><div class="foot">{foot}</div></div>'
+        for lbl, val, foot, cls in tiles
+    )
+    st.markdown(
+        '<div class="lead">Annie ingests purchase orders and invoices, extracts and standardises their '
+        'fields, then runs <b>3-way matching</b> &mdash; flagging duplicates, overbilling and anything that '
+        'needs a human. Use <b>Submit Document</b> to add files, or watch the inbox monitor bring them in.</div>',
+        unsafe_allow_html=True)
+    st.markdown(f'<div class="stat-grid">{cards}</div>', unsafe_allow_html=True)
+    if total == 0:
+        st.info("No documents yet. Head to **Submit Document** to upload a PO or invoice, "
+                "or open **Controls** to reset or configure the inbox.")
 
 elif page == "submit":
     st.markdown("Every document goes through **Module 1** (duplicate check, extraction, field check) first. "
