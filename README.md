@@ -69,6 +69,13 @@ The live demo runs on **Streamlit Community Cloud** (free) from the `ui-polish` 
 - Community Cloud storage is not persistent: the database and uploaded files reset when the app
   restarts. For data that must persist, see [deploy/](deploy/) (self-hosted VM).
 
+**Railway (always on, paid after the trial credit):** the `Dockerfile` builds the same app with
+Tesseract and the OCR models included, and `railway.json` tells Railway to use it, check
+`/_stcore/health` and restart on failure. Connect the repo in Railway, pick the `ui-polish` branch, set
+`ADMIN_PIN` under Variables and generate a domain. Without a volume, each redeploy starts a fresh
+database that loads the demo documents on the first visit. The same image runs locally:
+`docker build -t annie . && docker run -p 8501:8501 annie`.
+
 ## Demo mode
 
 - **Auto-load:** on Streamlit Community Cloud the app resets to the sample documents every time it

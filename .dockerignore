@@ -1,0 +1,15 @@
+# secrets and local state never go into the image
+.env
+.deploy/
+annie_v4.db*
+storage/
+# not needed at runtime
+.git/
+.github/
+.venv/
+__pycache__/
+*.pyc
+tests/
+docs/
+deploy/
+scripts/
