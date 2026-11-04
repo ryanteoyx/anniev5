@@ -14,6 +14,7 @@ import pandas as pd
 import streamlit as st
 
 import annie_core as annie
+import demo   # guided 'Demo' slideshow (demo.py + demo_screenshots/)
 
 st.set_page_config(page_title="Annie", layout="wide")
 con = annie.connect()
@@ -47,6 +48,7 @@ ss.setdefault("results", [])
 ss.setdefault("view_case", None)
 ss.setdefault("view_po", None)
 ss.setdefault("monitor_seen", 0)
+demo.init_state()
 if os.getenv("EMAIL_AUTO_FETCH", "1") != "0":
     annie.start_monitor()   # background inbox scan every POLL_SECONDS; no-op if already running or email is not configured
 ss.results += annie.pop_monitor_results()   # documents the background scan ingested since the last rerun
@@ -829,8 +831,21 @@ hr {border-color:var(--line); margin:1.4rem 0;}
     [class*="st-key-ctl_"] [data-testid="stColumn"] {flex:1 1 calc(50% - 12px) !important; min-width:calc(50% - 12px) !important;}
     [class*="st-key-ctl_"] [data-testid="stColumn"]:first-child {flex-basis:100% !important; min-width:100% !important;}
 }
+
+/* ---- Demo button: a small pill fixed in the top-right corner of every page ---- */
+.st-key-open_demo {position:fixed; top:.62rem; right:1.4rem; z-index:1000002; width:auto !important;}
+[data-testid="stMain"] .st-key-open_demo button[kind] {height:2.1rem; min-height:2.1rem; padding:0 .95rem; border-radius:999px;
+    background:var(--surface); border:1px solid var(--accent-line); color:var(--accent-strong); font-size:.82rem; font-weight:600;
+    box-shadow:0 1px 2px rgba(15,23,42,.06);}
+[data-testid="stMain"] .st-key-open_demo button[kind]:hover {background:var(--accent-soft); border-color:var(--accent); color:var(--accent-strong);}
 </style>
 """, unsafe_allow_html=True)
+
+# Presentation mode: while the demo is on, show only the slideshow (no sidebar, no page content).
+if ss.demo_active:
+    demo.render()
+    st.stop()
+st.button("▶ Demo", key="open_demo", on_click=demo.start, help="A guided slideshow of the application")
 
 
 def go_side(key, tab=None):
