@@ -14,10 +14,12 @@ import pandas as pd
 import streamlit as st
 
 import annie_core as annie
-import demo   # guided 'Demo' slideshow (demo.py + demo_screenshots/)
+import demo   # 'Slides' slideshow (demo.py + demo_screenshots/)
+import tour   # 'Play demo' guided walk through the live app (tour.py)
 
 st.set_page_config(page_title="Annie", layout="wide")
-con = annie.connect()
+# the guided tour runs on its own copy of the demo data, because this database is shared by every visitor
+con = annie.connect(tour.db_path() if st.session_state.get("tour_on") else annie.DB_PATH)
 SAMPLES = Path(__file__).parent / "samples"
 
 
@@ -49,6 +51,7 @@ ss.setdefault("view_case", None)
 ss.setdefault("view_po", None)
 ss.setdefault("monitor_seen", 0)
 demo.init_state()
+tour.init_state()
 if os.getenv("EMAIL_AUTO_FETCH", "1") != "0":
     annie.start_monitor()   # background inbox scan every POLL_SECONDS; no-op if already running or email is not configured
 ss.results += annie.pop_monitor_results()   # documents the background scan ingested since the last rerun
@@ -832,12 +835,15 @@ hr {border-color:var(--line); margin:1.4rem 0;}
     [class*="st-key-ctl_"] [data-testid="stColumn"]:first-child {flex-basis:100% !important; min-width:100% !important;}
 }
 
-/* ---- Demo button: a small pill fixed in the top-right corner of every page ---- */
-.st-key-open_demo {position:fixed; top:.62rem; right:1.4rem; z-index:1000002; width:auto !important;}
+/* ---- Demo buttons: small pills fixed in the top-right corner of every page ---- */
+.st-key-open_demo, .st-key-open_tour {position:fixed; top:.62rem; right:1.4rem; z-index:1000002; width:auto !important;}
+.st-key-open_tour {right:6.2rem;}
+[data-testid="stMain"] .st-key-open_tour button[kind] {height:2.1rem; min-height:2.1rem; padding:0 .95rem; border-radius:999px; font-size:.82rem; font-weight:600;}
 [data-testid="stMain"] .st-key-open_demo button[kind] {height:2.1rem; min-height:2.1rem; padding:0 .95rem; border-radius:999px;
     background:var(--surface); border:1px solid var(--accent-line); color:var(--accent-strong); font-size:.82rem; font-weight:600;
     box-shadow:0 1px 2px rgba(15,23,42,.06);}
 [data-testid="stMain"] .st-key-open_demo button[kind]:hover {background:var(--accent-soft); border-color:var(--accent); color:var(--accent-strong);}
+@media (max-width: 768px) {.st-key-open_tour {display:none;}}   /* the tour is for presenting on a laptop or a big screen */
 </style>
 """, unsafe_allow_html=True)
 
@@ -845,7 +851,11 @@ hr {border-color:var(--line); margin:1.4rem 0;}
 if ss.demo_active:
     demo.render()
     st.stop()
-st.button("▶ Demo", key="open_demo", on_click=demo.start, help="A guided slideshow of the application")
+if ss.tour_on:
+    tour.render()
+else:
+    st.button("▶ Play demo", key="open_tour", type="primary", on_click=tour.start, help="A guided walk through the live application")
+    st.button("Slides", key="open_demo", on_click=demo.start, help="A slideshow of the application")
 
 
 def go_side(key, tab=None):

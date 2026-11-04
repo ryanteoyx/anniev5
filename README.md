@@ -73,6 +73,11 @@ For a self-hosted VM where data persists, see [deploy/](deploy/).
 
 ## Demo mode
 
+- **▶ Play demo** (top right, on a laptop or big screen): a guided walk through the live app. A cursor clicks through
+  the pages, the view zooms in on one feature and stops so you can talk, then **Next** (or Space) moves on. Left arrow
+  goes back, F is full screen and Esc leaves. It uses a private copy of the demo data, so it changes nothing for other
+  visitors, and it can be repeated. Edit the stops in `steps()` in `tour.py`.
+- **Slides:** the same features as a slideshow of screenshots (`demo.py`).
 - **Auto-load:** an empty database is filled with the sample documents on the first visit, so the
   demo never opens blank (on Railway every deploy starts empty). `DEMO_AUTOLOAD` overrides this:
   `reset` (reload the samples on every start), `1` (empty database only) or `0` (off).
@@ -111,6 +116,8 @@ The mailbox is opened read-only and mail is never marked as read.
 | `reference_samples/` | Optional reference documents and labels that tune classification |
 | `docs/` | Business logic and architecture documentation |
 | `tests/` | Rule tests and the sample-set regression check |
+| `tour.py` | The Play demo guided tour |
+| `demo.py`, `demo_screenshots/` | The Slides slideshow |
 | `Dockerfile`, `.dockerignore` | Container build used by Railway (and anywhere Docker runs) |
 | `deploy/` | Optional self-hosted VM setup |
 | `annie_v4.db`, `storage/` | Created at runtime (git-ignored) |

@@ -1,6 +1,6 @@
 """Presenter-mode "Demo" slideshow for Annie, styled to match app.py (Inter, slate neutrals, one blue accent).
 
-Integration (already in app.py):  demo.init_state() at start-up, a "Demo" button calling demo.start, and
+Integration (already in app.py):  demo.init_state() at start-up, a "Slides" button calling demo.start, and
     if ss.demo_active: demo.render(); st.stop()
 placed before the sidebar is drawn, so presentation mode hides the normal navigation.
 

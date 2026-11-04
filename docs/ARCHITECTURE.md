@@ -53,6 +53,8 @@ flowchart LR
 | `samples/` | 21 sample PO/PRs and invoices; the demo data set |
 | `reference_samples/` | Optional reference documents and `reference_labels.json` that tune classification and labels (created empty at start) |
 | `Dockerfile`, `.dockerignore` | Container build used by Railway: Python 3.11, Tesseract, OCR models, Streamlit on `$PORT` |
+| `tour.py` | The Play demo guided tour: stops, private demo data, browser script |
+| `demo.py`, `demo_screenshots/` | The Slides slideshow |
 | `deploy/` | Optional self-hosted setup on a VM (systemd + Caddy), for when data must persist |
 | `tests/` | Rule tests and the sample-set regression check (see section 10) |
 | `docs/` | This document and the business-logic document |
@@ -157,6 +159,12 @@ Every state change writes a line to `log`, which is what the Audit Log page show
 * **Streamlit model.** The script reruns on every interaction; per-browser state lives in
   `st.session_state` (current page, opened case, session results, PIN entry). The database is shared
   by all users of the deployment.
+* **Guided tour.** While `tour_on` is set, the session's `con` points at a private SQLite copy built once per
+  process by `tour.prepare` (the samples, plus one Complete and one posted case made through the normal engine calls),
+  so a demo never depends on what visitors did to the shared data. A script in the page draws the cursor, ring and
+  panel outside Streamlit's root, clicks the real buttons, and zooms by transforming `.stApp`. It only navigates:
+  it never submits a form or presses Post. Scripts passed to `st.html` must not contain tag-like text, or the
+  sanitiser removes them, which is why `tour.render` writes those characters as `\x3c`.
 * **Demo auto-load.** `demo_autoload` is wrapped in `st.cache_resource`, so it runs once per process
   (and again when its code changes). It ingests `samples/*.pdf` through the normal upload path when
   the database is empty, so every Railway deploy opens a clean demo (see `DEMO_AUTOLOAD`).
