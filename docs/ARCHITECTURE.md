@@ -49,7 +49,6 @@ flowchart LR
 | `app.py` | Streamlit UI (about 1,150 lines): pages, presentation helpers, stylesheet |
 | `annie_core.py` | The engine (about 2,400 lines): every business rule, the database and the inbox monitor |
 | `requirements.txt` | Python dependencies; Streamlit is pinned (`1.66.1`) because the stylesheet targets its element IDs |
-| `packages.txt` | System packages for the host: `tesseract-ocr`, `libgl1`, `libglib2.0-0` |
 | `.streamlit/config.toml` | Theme colours (kept in step with the stylesheet tokens) |
 | `samples/` | 21 sample PO/PRs and invoices; the demo data set |
 | `reference_samples/` | Optional reference documents and `reference_labels.json` that tune classification and labels (created empty at start) |
@@ -159,9 +158,8 @@ Every state change writes a line to `log`, which is what the Audit Log page show
   `st.session_state` (current page, opened case, session results, PIN entry). The database is shared
   by all users of the deployment.
 * **Demo auto-load.** `demo_autoload` is wrapped in `st.cache_resource`, so it runs once per process
-  (and again when its code changes). On Streamlit Community Cloud it resets the database and ingests
-  `samples/*.pdf` through the normal upload path, so every restart or redeploy opens a clean demo;
-  locally it only fills an empty database (see `DEMO_AUTOLOAD`).
+  (and again when its code changes). It ingests `samples/*.pdf` through the normal upload path when
+  the database is empty, so every Railway deploy opens a clean demo (see `DEMO_AUTOLOAD`).
 * **What is cached.** Database reads take well under a millisecond, so they are not cached; caching
   them would only risk stale lists. PDF previews are the expensive part: `pdf_pages` renders each page
   to a PNG once with PyMuPDF (`st.cache_data`, keyed on path and modification time) and the browser
@@ -220,13 +218,12 @@ dashboard cards go two per row and filter controls wrap.
 
 ## 8. Configuration
 
-Settings come from environment variables (Railway Variables, or a `.env` file locally or on a VM) or
-Streamlit secrets (on Community Cloud). Root-level Streamlit secrets are also exposed as environment variables.
+Settings come from environment variables (Railway Variables, or a `.env` file locally or on a VM).
 
 | Setting | Default | Purpose |
 |---|---|---|
 | `ADMIN_PIN` | not set | Unlocks *Reset & load demo data* and *Reset database*. Without it both stay locked. |
-| `DEMO_AUTOLOAD` | `reset` on Community Cloud, `1` elsewhere | At start: `reset` clears the database and loads the sample documents; `1` loads them only into an empty database; `0` never. |
+| `DEMO_AUTOLOAD` | `1` | At start: `reset` clears the database and loads the sample documents; `1` loads them only into an empty database; `0` never. |
 | `EMAIL_HOST`, `EMAIL_ADDRESS`, `EMAIL_PASSWORD` | not set | IMAP account for email intake (all three required) |
 | `EMAIL_PORT` | `993` | IMAP over SSL |
 | `EMAIL_MAILBOX` | `INBOX` | Folder to scan |
@@ -248,12 +245,9 @@ no longer read for new services, so the remaining settings live in the Railway d
 * **Storage is not persistent** (no volume). Each deploy starts an empty database, which demo
   auto-load fills with the sample set on the first visit. Changes visitors make last until the next
   deploy or restart, or until *Reset & load demo data*.
-* **Access.** The app is public. Visitors can browse, open cases and upload; destructive admin actions
-  need `ADMIN_PIN`, set under the service's Variables.
-
-**Earlier host: Streamlit Community Cloud** (`annie-acct439.streamlit.app`). It is free but sleeps
-after 12 hours without visitors, and since November 2026 it does not render for headless browsers, so
-the automated keep-awake job that used to visit it was removed.
+* **Region.** Southeast Asia (Singapore).
+* **Access.** The app is public. Visitors can browse, open cases and upload. The reset actions stay
+  locked because `ADMIN_PIN` is not set; redeploying the service restores the starting state.
 
 **Alternative: a self-hosted VM** (`deploy/`). `setup.sh` installs the app on Ubuntu 24.04 (for example
 an Oracle Cloud Always Free ARM VM) with a systemd service, Caddy for HTTPS on a free `sslip.io`

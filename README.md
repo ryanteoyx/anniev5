@@ -62,31 +62,30 @@ The live demo runs on **Railway** (always on; paid after the trial credit) from 
 branch. Railway detects the `Dockerfile`, which builds Python 3.11 with Tesseract and the OCR models
 included, and redeploys on every push.
 
-- **Settings in Railway:** Healthcheck Path `/_stcore/health`, restart policy *On Failure*, public
-  domain on port 8080 (Railway's `PORT`), and `ADMIN_PIN` under Variables.
+- **Settings in Railway:** region Southeast Asia (Singapore), Healthcheck Path `/_stcore/health`,
+  restart policy *On Failure*, public domain on port 8080 (Railway's `PORT`). `ADMIN_PIN` is optional
+  and goes under Variables.
 - **Storage:** there is no volume, so each redeploy starts a fresh database that loads the demo
   documents on the first visit. Changes made during a demo last until the next deploy or restart.
 - **Same image locally:** `docker build -t annie . && docker run -p 8501:8501 annie`.
 
-**Earlier host:** Streamlit Community Cloud (`annie-acct439.streamlit.app`) still works but sleeps
-after 12 hours without visitors, and it no longer renders for headless browsers, so it can't be kept
-awake automatically. For a self-hosted VM where data persists, see [deploy/](deploy/).
+For a self-hosted VM where data persists, see [deploy/](deploy/).
 
 ## Demo mode
 
 - **Auto-load:** an empty database is filled with the sample documents on the first visit, so the
-  demo never opens blank (on Railway every deploy starts empty). On Streamlit Community Cloud the app
-  also resets to the samples whenever it starts. `DEMO_AUTOLOAD` overrides this: `reset`, `1` (empty
-  database only) or `0` (off).
+  demo never opens blank (on Railway every deploy starts empty). `DEMO_AUTOLOAD` overrides this:
+  `reset` (reload the samples on every start), `1` (empty database only) or `0` (off).
 - **Controls → Demo data → Reset & load demo data** restores the starting state before a
   presentation; **Danger zone → Reset database (empty)** clears everything for live uploads.
-- Both need the **admin PIN**: `ADMIN_PIN` under the service's Variables on Railway (Settings →
-  Secrets on Streamlit Cloud), or `ADMIN_PIN=...` in `.env` locally. Without a PIN they stay locked. Visitors can still browse,
-  open cases and upload.
+- Both need the **admin PIN**: `ADMIN_PIN` under the service's Variables on Railway, or
+  `ADMIN_PIN=...` in `.env` locally. Without a PIN they stay locked, and visitors can still browse,
+  open cases and upload. The live demo runs without one: redeploy the service in Railway to restore
+  the starting state.
 
 ## Optional: email intake
 
-Set these in `.env` (or as secrets) to turn on the inbox monitor:
+Set these in `.env` (or Railway Variables) to turn on the inbox monitor:
 
 ```
 EMAIL_HOST=imap.example.com

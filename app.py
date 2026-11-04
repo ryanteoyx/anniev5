@@ -20,16 +20,6 @@ con = annie.connect()
 SAMPLES = Path(__file__).parent / "samples"
 
 
-def setting(name, default=None):
-    """A deploy setting: Streamlit secrets (Community Cloud) first, then the environment / .env."""
-    try:
-        if name in st.secrets:
-            return str(st.secrets[name])
-    except Exception:   # no secrets file, e.g. a local run
-        pass
-    return os.getenv(name, default)
-
-
 def load_demo(con):
     """Run every sample PDF through Module 1 and Module 2 exactly like an upload, in file-name order."""
     out = []
@@ -38,16 +28,12 @@ def load_demo(con):
     return out
 
 
-ON_COMMUNITY_CLOUD = Path(__file__).resolve().as_posix().startswith("/mount/src/")
-
-
 @st.cache_resource(show_spinner="Preparing the demo data...")
 def demo_autoload(_con):
     """Once per app start, so the site never opens blank or half-used.
-    DEMO_AUTOLOAD: "reset" = clear the database and load the demo documents (default on Streamlit Community Cloud,
-    so every restart or redeploy starts a clean demo); "1" = load them only into an empty database (default locally);
-    "0" = never."""
-    mode = setting("DEMO_AUTOLOAD", "reset" if ON_COMMUNITY_CLOUD else "1")
+    DEMO_AUTOLOAD: "reset" = clear the database and load the demo documents on every start; "1" = load them only
+    into an empty database (default); "0" = never."""
+    mode = os.getenv("DEMO_AUTOLOAD", "1")
     if mode == "0" or (mode != "reset" and annie.list_documents(_con)):
         return 0
     if mode == "reset":
@@ -1023,7 +1009,7 @@ elif page == "submit":
                        + (f" | last scan {mon['last_run']}" if mon["last_run"] else "") + " (change on the Controls page).")
         else:
             st.info("Email intake is not connected on this site. Upload documents on the left instead.")
-            st.caption("To connect a mailbox, set " + ", ".join(em["missing"]) + " (Streamlit secrets or `.env`) and restart the app.")
+            st.caption("To connect a mailbox, set " + ", ".join(em["missing"]) + " (Railway Variables or `.env`) and restart the app.")
         if st.button("Check inbox now", disabled=not em["ok"]):
             with st.spinner("Reading the inbox..."):
                 try:
@@ -1194,7 +1180,7 @@ elif page == "audit":
 # 12. PAGE: CONTROLS (sample data, database reset, Module 1 status)
 # =====================================================================================
 elif page == "controls":
-    admin_pin = setting("ADMIN_PIN") or ""
+    admin_pin = os.getenv("ADMIN_PIN") or ""
     with st.container(key="card_demo"):
         st.subheader("Demo data")
         st.caption(f"Clears the database and processes the {len(list(SAMPLES.glob('*.pdf')))} sample documents, so every "
@@ -1202,7 +1188,7 @@ elif page == "controls":
         unlocked = bool(admin_pin) and ss.get("admin_unlocked") == admin_pin
         if not admin_pin:
             st.info("Reset and reload are locked until an `ADMIN_PIN` is set "
-                    "(Streamlit Cloud: app Settings → Secrets; locally: the `.env` file).")
+                    "(Railway: the service's Variables; locally: the `.env` file).")
         elif not unlocked:
             with st.form("pin_form", border=False):
                 c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
