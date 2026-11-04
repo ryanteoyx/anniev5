@@ -11,3 +11,4 @@ pillow-heif
 rapidocr
 onnxruntime
 numpy
+playwright
