@@ -34,3 +34,6 @@ Thumbs.db
 
 # Local deploy secrets (app login) - never commit
 .deploy/
+
+
+ADMIN_PIN
