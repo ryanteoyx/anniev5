@@ -36,4 +36,4 @@ Thumbs.db
 .deploy/
 
 
-ADMIN_PIN
+ADMIN_PIN = 
