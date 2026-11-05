@@ -56,7 +56,7 @@ SLIDES = [
          title="PO/PRs with open balance", tagline="Scroll down to see what has been ordered, billed and received.",
          points=["Ordered, billed, received and open-to-bill for every PO/PR that is not fully billed.",
                  "Click a PO/PR reference to preview the document; download the table as CSV.",
-                 "Services with no amount cited expect a single invoice."]),
+                 "PO/PRs that cite no amount are handled in Call-Offs."]),
     dict(icon="📂", label="Stage 1 - invoice case", shot="06_s1_case.png",
          title="Opening an invoice in Stage 1", tagline="The invoice, its source document and why it is still waiting.",
          points=["Source document: the invoice, with a field summary and a file preview.",

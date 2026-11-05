@@ -66,8 +66,8 @@ def steps(c: dict) -> list[dict]:
               review, '[data-testid="stExpander"]'),
         _stop("Intake Review", "See exactly what is missing", "Annie names the missing fields in plain words, next to the original file. "
               "This invoice has no date or invoice number.", review_case, '[data-testid="stExpanderDetails"] [data-testid="stColumn"]:nth-child(2)'),
-        _stop("Stage 1: Open cases", "Why an invoice is waiting", "Each invoice waiting for a PO/PR shows the reason in plain English: not received, no matching line, or balance too low.",
-              s1, _key("tbl_s1a")),
+        _stop("Stage 1: Open cases", "Why an invoice is waiting", "Each waiting invoice shows the reason in plain English. This one is held because its unit price is far above the PO/PR price.",
+              s1, f'{_key("tbl_s1a")} [data-testid="stHorizontalBlock"]:has({_key("s1a_" + c["held"])})'),
         _stop("Stage 1: Open cases", "Balances on every PO/PR", "Ordered, billed, received and open to bill, for every PO/PR that is not fully billed.",
               s1, _key("tbl_s1b")),
         _stop("Stage 1: Open cases", "Overbilling is caught", "Opening a case shows why it stopped. Here the invoice bills more than the PO/PR has left, so it cannot be allocated.",
@@ -104,7 +104,7 @@ def _seed(con) -> dict:
     for p in sorted(SAMPLES.glob("*.pdf")):
         annie.ingest_file(con, p.name, p.read_bytes(), channel="UPLOAD")
     case = {r["invoice_reference"]: r["case_id"] for r in annie.case_rows(con, [annie.S_OPEN_PO, annie.S_GR])}
-    chosen = dict(open=case["LS-0457"], pending=case["ZH/26/1230"], complete=case["AOS-INV-31001"],
+    chosen = dict(open=case["LS-0457"], held=case["ATS-INV-4101"], pending=case["ZH/26/1230"], complete=case["AOS-INV-31001"],
                   calloff=next(r["case_id"] for r in annie.calloff_rows(con, [annie.S_CALLOFF]) if "GreenGrocer" in r["vendor"]))
     today = date.today().isoformat()
     for case_id in (chosen["complete"], case["BE-2026-014"]):

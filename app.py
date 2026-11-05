@@ -89,7 +89,7 @@ def file_view(doc, height=620, key=""):
     st.download_button("Download original file", path.read_bytes(), file_name=path.name, key=f"dl_{key}_{path.name}")
 
 
-BASIS_LABEL = {"QTY": "Qty", "AMOUNT": "Amount", "SINGLE": "Single invoice (tick)"}
+BASIS_LABEL = {"QTY": "Qty", "AMOUNT": "Amount"}
 
 
 def summary(doc):
@@ -229,7 +229,7 @@ def render_results(results):
 # =====================================================================================
 def gr_form(case_id, lines):
     """One GR/SES batch. Quantities (goods) or amounts (services) are entered per allocated PO/PR line."""
-    cat = "Services" if all(l["basis"] in ("AMOUNT", "SINGLE") for l in lines) else "Goods"
+    cat = "Services" if all(l["basis"] == "AMOUNT" for l in lines) else "Goods"
     preparers = annie.allowed_preparers(con, case_id)
     vendor = annie.case_po_docs(con, case_id)[0]["payload"].get("vendor_name")
     with st.form(f"gr_{case_id}"):
@@ -251,7 +251,7 @@ def gr_form(case_id, lines):
                                 column_config={"line_id": "Line", "po_reference": "PO/PR", "item": "Item", "basis": "Basis",
                                                "ordered": "Ordered", "received_for_this_invoice": "Received so far",
                                                "billed_this_invoice": "Billed on this invoice",
-                                               "receive_now": st.column_config.NumberColumn("Receive now (single invoice: 1 = done)", min_value=0.0)})
+                                               "receive_now": st.column_config.NumberColumn("Receive now", min_value=0.0)})
         submitted = st.form_submit_button("Submit GR/SES", type="primary")
     if submitted:
         totals = {}
@@ -269,21 +269,20 @@ def gr_form(case_id, lines):
 
 
 def manual_panel(case_id):
-    """Stage 1: match the invoice by hand (goods by qty, services by amount, or a single-invoice service)."""
+    """Stage 1: match the invoice by hand (goods by qty or services by amount)."""
     with st.expander("Match manually"):
         inv_lines, cands = annie.invoice_line_list(con, case_id), annie.manual_candidates(con, case_id)
         if not cands:
             st.info("No PO/PR line has anything left to bill.")
             return
         by_label = {c["label"]: c for c in cands}
-        st.caption("For each invoice line choose the PO/PR line it bills. Enter a **quantity** for goods, a **money amount** for services "
-                   "tracked by amount, or any number above 0 for a single-invoice service (it takes the whole invoice line). "
+        st.caption("For each invoice line choose the PO/PR line it bills. Enter a **quantity** for goods or a **money amount** for services. "
                    "To split one invoice line over several PO/PR lines, add rows with the same invoice-line number; each invoice line must reach 100%.")
         seed = []
         for ln in inv_lines:
             best = max(cands, key=lambda c: (annie.line_score(ln, c, False, False), c["vendor_sim"]))
-            val = ln["qty"] if best["basis"] == "QTY" else (1.0 if best["basis"] == "SINGLE" else ln["amount"])
-            seed.append(dict(inv_line=ln["index"], invoice_item=ln["description"], po_line=best["label"], allocate=min(val, best["open"]) if best["basis"] != "SINGLE" else 1.0))
+            val = ln["qty"] if best["basis"] == "QTY" else ln["amount"]
+            seed.append(dict(inv_line=ln["index"], invoice_item=ln["description"], po_line=best["label"], allocate=min(val, best["open"])))
         # a form: editing the table or typing the reason does not rerun the page until Check or Confirm is pressed
         with st.form(f"mm_form_{case_id}", border=False):
             edited = st.data_editor(pd.DataFrame(seed), num_rows="dynamic", hide_index=True, key=f"mm_{case_id}", disabled=["invoice_item"],
@@ -326,7 +325,7 @@ def manual_panel(case_id):
 def unmatch_panel(case_id):
     """Stage 2: undo the match but keep the invoice, so it can be re-matched by hand in Stage 1."""
     with st.expander("Unmatch (send back to Stage 1)"):
-        st.caption("Reverses the billing on the PO/PR lines (a single-invoice PO/PR becomes open again) and returns this invoice to "
+        st.caption("Reverses the billing on the PO/PR lines and returns this invoice to "
                    "Stage 1 so you can match it manually. It will not be re-matched automatically. GR/SES batches raised for this match are voided.")
         with st.form(f"um_form_{case_id}", border=False):
             reason = st.text_input("Reason (required)", key=f"um_reason_{case_id}")
@@ -344,7 +343,7 @@ def dismiss_panel(case_id):
     """Stage 1 / Stage 2: delete the invoice (billing reversed, file forgotten so it can be resubmitted)."""
     with st.expander("Dismiss invoice (delete)"):
         st.warning("This deletes the invoice and its stored file. Any billing it made on PO/PR lines is reversed "
-                   "(many-to-many lines get their balance back; a single-invoice PO/PR returns to Stage 1). "
+                   "(its lines get their balance back). "
                    "GR/SES batches raised for this match are voided. The same file can be uploaded again later.")
         with st.form(f"dis_form_{case_id}", border=False):
             ok = st.checkbox("I understand and want to delete this invoice", key=f"dis_ok_{case_id}")
@@ -377,8 +376,6 @@ def po_page(record_id):
         file_view(d["doc"], key="po_preview")
     with right:
         st.markdown("#### Lines and balances")
-        if d["lines"] and d["lines"][0]["basis"].startswith("Services (single"):
-            st.info("Single-invoice service: this PO/PR expects one invoice only.")
         st.dataframe(pretty(pd.DataFrame(d["lines"])), hide_index=True)
         st.markdown("#### Invoices charged to this PO/PR")
         if d["invoices"]:

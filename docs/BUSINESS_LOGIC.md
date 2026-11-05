@@ -202,7 +202,6 @@ Entry point: `process_document` (section 13).
 |---|---|---|
 | `QTY` | Goods with priced items | Quantity |
 | `AMOUNT` | Services (or goods without item lines) with a total above zero | Money, before tax; several invoices may bill against it |
-| `SINGLE` | A services PO/PR that prices a line but whose total is zero | One invoice only (a rare edge case, see finding 6) |
 
 After registering, Annie **retries every waiting invoice**, oldest first (`retry_unallocated`), because
 the new PO/PR may be the one they were waiting for.
@@ -234,6 +233,18 @@ line, or the whole invoice waits in Stage 1 with a reason.
   PO/PRs, the line belongs to one of them; an invoice that cites nothing may match any PO/PR of that
   vendor.
 
+**Guard rails on goods lines** (`line_problems`). The score decides which line an invoice line belongs
+to; these checks decide whether it may be billed without a person looking. A goods (`QTY`) line is held
+in Stage 1 with the reason shown if any of these is true, even when the invoice cites the PO/PR:
+
+* the description does not resemble the PO/PR item (`desc_match` below **0.40**),
+* the unit price is more than **5%** above the PO/PR price (lower prices are not blocked), or
+* the line total is more than quantity x unit price (0.5% plus 0.05 allowed for rounding; discounts
+  are not blocked).
+
+Services are not checked, because their wording legitimately differs ("Milestone 1" and "Annual
+project"). Manual match can still accept a held line, with a typed reason.
+
 **Step 3: score each candidate** (`line_score`):
 
 * If the invoice cites this PO/PR **and** it has exactly one line left to bill, the score is **1.0**.
@@ -255,7 +266,7 @@ score 1.0, a 5% difference about 0.52, and a difference of 10% of the higher pri
 **Step 4: accept and check capacity.** A candidate is acceptable at **0.80 or more**
 (`LINK_THRESHOLD`). Among acceptable candidates, the highest score with enough open balance is used
 (ties go to the earliest PO/PR line). Capacity is the open quantity for goods, the open amount for
-services by amount (0.005 tolerance), and one invoice for single-invoice lines.
+services by amount (0.005 tolerance).
 
 **Amounts are compared before tax** (`net_total`). For a service PO/PR and for an invoice billed as one
 amount, Annie uses the subtotal when the document prints one, or else the total minus the GST/VAT line,
@@ -291,6 +302,7 @@ The case shows one or more of these reasons:
 | `'<line>' matches no open PO line: PR-... has nothing left to bill` | The vendor's PO/PRs are fully billed. |
 | `'<line>' matches no open PO line (no PO/PR for this vendor)` | No PO/PR with a vendor name at least 0.70 similar. |
 | `'<line>' matches no open PO line: PR-... is in SGD but the invoice is in USD` | The only candidates are in another currency. |
+| `'<line>' is held for review - PR-...: <reason>` | A goods line failed a guard rail: wrong item, price too high or line total too high. Match it by hand if it is correct. |
 | `'<line>' bills 4 but PR-... has only 3 left to bill` | A good match, but the invoice asks for more than is left: **overbilling**. |
 
 ### 3.5 Retry order
@@ -306,13 +318,12 @@ For invoices that do not match automatically, a user picks the PO/PR line for ea
 
 * Each invoice line must end up **exactly 100%** allocated; one invoice line may be split over several
   PO/PR lines.
-* Goods lines take a quantity; services by amount take an amount; a single-invoice line takes the
-  whole invoice line and can be used once.
+* Goods lines take a quantity; services by amount take an amount.
 * Open balances still apply; you cannot bill more than is left.
 * A PO/PR line in a different currency from the invoice cannot be chosen (it is left out of the picker
   and refused if submitted).
-* Annie shows the automatic score for each choice and warns when it is below 0.80 or when the vendor
-  similarity is below 0.70. You may still confirm, but **a typed reason of at least 5 characters is
+* Annie shows the automatic score for each choice and warns when it is below 0.80, when the vendor
+  similarity is below 0.70, or when a guard rail fails. You may still confirm, but **a typed reason of at least 5 characters is
   required** and is stored with the allocation and in the audit log.
 
 ### 3.7 Unmatch and dismiss
@@ -401,6 +412,9 @@ Pending GR/SES and Complete include Call-Off cases in those states.
 | `LINK_THRESHOLD` | 0.80 | Module 2 | Minimum line score for an automatic match |
 | `LINE_W` | description 0.6, price 0.4 | Module 2 | Line score weights |
 | `CITATION_BONUS` | +0.25 | Module 2 | Added when the invoice cites the PO/PR |
+| `PRICE_TOLERANCE` | 5% | Module 2 | How far a goods unit price may exceed the PO/PR price before the line is held |
+| `ARITH_TOLERANCE` | 0.5% + 0.05 | Module 2 | How far a goods line total may exceed quantity x unit price before the line is held |
+| `DESC_FLOOR` | 0.40 | Module 2 | Minimum resemblance between a goods invoice line and the PO/PR item |
 | `VENDOR_MIN` | 0.70 | Module 2 | Minimum vendor-name similarity for a candidate (and the warning level in manual matching) |
 | Duplicate invoice vendor check | 0.90 | Module 2 | Vendor similarity for "same invoice number from the same vendor" |
 | `ENFORCE_UNIQUE_INVOICE_NUMBER` | on | Module 2 | Reject a repeated invoice number from the same vendor (sent to Intake Review) |
@@ -412,7 +426,7 @@ Pending GR/SES and Complete include Call-Off cases in those states.
 
 ## 8. The sample documents and what they demonstrate
 
-The `samples/` folder holds 21 PDFs, loaded automatically into an empty demo database. Processed in
+The `samples/` folder holds 28 PDFs, loaded automatically into an empty demo database. Processed in
 file-name order, they produce:
 
 | Files | Scenario | Outcome |
@@ -425,12 +439,16 @@ file-name order, they produce:
 | P60, P61 | CoolBreeze aircon service; invoice citing no PO | Allocated by description |
 | P62, P63 | Lenscape photography; invoice above the PO amount | Waits: overbilling caught |
 | P64, P65 | GreenGrocer market-price ingredients (no amount) | Call-Off; invoice waits for a manual match |
+| S09 | Orion courier invoice with no invoice number or date | Held in Intake Review: mandatory fields missing |
+| T1 (PO and invoice) | Bolts billed at 7.50 against a PO/PR price of 2.50 | Held in Stage 1: price too high |
+| T2 (PO and invoice) | Consulting hours billed against a toner PO/PR | Held in Stage 1: wrong item |
+| T3 (PO and invoice) | 10 chairs at 50.00 with a line total of 999.00 | Held in Stage 1: line total too high |
 
 ---
 
 ## 9. Review findings
 
-A review of the business logic (November 2026). Findings 1 to 3 are **fixed**; the rest need a
+A review of the business logic (November 2026). Findings 1 to 3 and 6 are **fixed**; the rest need a
 decision from the team before anything changes.
 
 | # | Area | Finding | Impact | Status or suggestion |
@@ -440,7 +458,7 @@ decision from the team before anything changes.
 | 3 | Module 2 | **Rejected duplicates were a dead end.** A document whose PO/PR reference or invoice number already existed had no case, did not appear in Intake Review, and could not be re-uploaded. | Medium | **Fixed.** It now goes to Intake Review as `DUPLICATE_REFERENCE` with the reason; dismissing it frees the file to be submitted again. |
 | 4 | Matching | **No date checks.** An invoice dated before its PO/PR, or service dates outside the PO/PR period, are not flagged. | Low | Warn on invoice-before-PO and on out-of-period service dates. |
 | 5 | Intake | **Day-first dates.** Ambiguous numeric dates are read day first, so a US-format 03/04/2026 becomes 3 April. | Low | Keep, but document per supplier or detect the format from unambiguous dates. |
-| 6 | Module 2 | **"Single invoice" basis is now rare.** PO/PRs with no amount open Call-Offs, so the single-invoice basis only occurs for a services PO/PR that prices a line but states a zero total. The extra paths remain in the code. | Info | Decide whether to retire it to simplify the logic. |
+| 6 | Module 2 | **"Single invoice" basis was rarely used.** PO/PRs with no amount already opened Call-Offs, so it only applied to a services PO/PR that priced a line but stated a zero total. | Info | **Fixed.** The basis was retired; such a PO/PR now opens a Call-Off. |
 | 7 | Code comment | The price-similarity comment says "a 10% gap scores 0". Exactly, a gap of 10% of the **higher** price scores 0; a 10% gap measured on the lower price scores about 0.09. Behaviour is fine. | Info | Correct the comment. |
 | 8 | Duplicates | The duplicate-invoice check is exact on the number, so a reissued invoice with a changed number (INV-001 vs INV-001A) is not caught. | Low | Optionally warn on near-identical numbers with the same vendor and amount. |
 | 9 | Allocation | Balance is first come, first served: the oldest waiting invoice claims limited balance even if a newer invoice matches better. | Info | Expected behaviour; noted for awareness. |

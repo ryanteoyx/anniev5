@@ -1,6 +1,6 @@
 """Sample-set regression check.
 
-Loads the 21 sample documents into an empty, temporary Annie and compares what happens (routing, matching
+Loads the 28 sample documents into an empty, temporary Annie and compares what happens (routing, matching
 outcome, final case and PO/PR states, waiting reasons) with the snapshot in expected_samples.json.
 
     python tests/sample_regression.py            # compare; exit code 1 if anything differs

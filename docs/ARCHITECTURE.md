@@ -50,7 +50,7 @@ flowchart LR
 | `annie_core.py` | The engine (about 2,400 lines): every business rule, the database and the inbox monitor |
 | `requirements.txt` | Python dependencies; Streamlit is pinned (`1.66.1`) because the stylesheet targets its element IDs |
 | `.streamlit/config.toml` | Theme colours (kept in step with the stylesheet tokens) |
-| `samples/` | 21 sample PO/PRs and invoices; the demo data set |
+| `samples/` | 28 sample PO/PRs and invoices; the demo data set |
 | `reference_samples/` | Optional reference documents and `reference_labels.json` that tune classification and labels (created empty at start) |
 | `Dockerfile`, `.dockerignore` | Container build used by Railway: Python 3.11, Tesseract, OCR models, Streamlit on `$PORT` |
 | `tour.py` | The Play demo guided tour: stops, private demo data, browser script |
@@ -95,7 +95,7 @@ One SQLite file (`annie_v4.db`), WAL journal mode, 5-second busy timeout.
 | `attachments` | Distinct file (by SHA-256) | Where the original is stored; drives the duplicate-file check |
 | `content_registry` | Distinct content fingerprint | Drives the duplicate-content check |
 | `documents` | Document in Module 2 (PO, INVOICE, GR) | `payload` holds the standardised JSON; `outcome` and `case_id` track what happened |
-| `po_lines` | Billable PO/PR line | Basis (QTY/AMOUNT/SINGLE), ordered, billed and received running balances |
+| `po_lines` | Billable PO/PR line | Basis (QTY/AMOUNT), ordered, billed and received running balances |
 | `allocations` | Invoice-line to PO-line link | Quantity, amount, score, manual flag and reason |
 | `cases` | Invoice | Status, waiting reason, link score, `hold` (after unmatch), `calloff_id` |
 | `calloffs`, `calloff_invoices` | Call-Off case; invoice matched to one | |
@@ -280,7 +280,7 @@ the real database:
 
 ```bash
 python tests/test_findings.py      # rules: currency, tax, duplicate references
-python tests/sample_regression.py  # the 21 samples still produce the outcomes in expected_samples.json
+python tests/sample_regression.py  # the 28 samples still produce the outcomes in expected_samples.json
 ```
 
 `sample_regression.py` loads the sample set into an empty Annie and compares routing, matching outcomes,

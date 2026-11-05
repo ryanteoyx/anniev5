@@ -97,12 +97,33 @@
       "reason": "PR-2026-0391 is a Call-Off PO/PR (no amount cited): match it manually from the Call-Offs tab",
       "score": null,
       "status": "Open - Pending PO/PR"
+    },
+    "CASE-2026-0013": {
+      "invoice": "ATS-INV-4101",
+      "po": "PR-2026-0401",
+      "reason": "'Steel bolts M8' is held for review - PR-2026-0401: unit price 7.50 is 200% above the PO/PR price 2.50 (tolerance 5%)",
+      "score": null,
+      "status": "Open - Pending PO/PR"
+    },
+    "CASE-2026-0014": {
+      "invoice": "PWT-INV-5202",
+      "po": "PR-2026-0402",
+      "reason": "'Management consulting hours' is held for review - PR-2026-0402: 'Management consulting hours' does not resemble the PO/PR item 'Printer toner cartridge, black' (match 0.18, minimum 0.40)",
+      "score": null,
+      "status": "Open - Pending PO/PR"
+    },
+    "CASE-2026-0015": {
+      "invoice": "SWF-INV-6303",
+      "po": "PR-2026-0403",
+      "reason": "'Ergonomic office chair' is held for review - PR-2026-0403: line total 999.00 is more than quantity x unit price = 500.00",
+      "score": null,
+      "status": "Open - Pending PO/PR"
     }
   },
   "counts": {
     "calloff": 2,
-    "review": 0,
-    "s1": 9,
+    "review": 1,
+    "s1": 15,
     "s2": 6,
     "s3": 0
   },
@@ -232,6 +253,48 @@
       "m1_status": "READY_FOR_MODULE_2",
       "outcome": "UNALLOCATED",
       "route": "MODULE_2"
+    },
+    "S09_INV_INCOMPLETE_Orion.pdf": {
+      "doc_type": null,
+      "m1_status": "READY_WITH_GAPS",
+      "outcome": null,
+      "route": "INTAKE_REVIEW"
+    },
+    "T1_price_variance_INVOICE.pdf": {
+      "doc_type": "INVOICE",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "UNALLOCATED",
+      "route": "MODULE_2"
+    },
+    "T1_price_variance_PO.pdf": {
+      "doc_type": "PO",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "REGISTERED",
+      "route": "MODULE_2"
+    },
+    "T2_wrong_item_INVOICE.pdf": {
+      "doc_type": "INVOICE",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "UNALLOCATED",
+      "route": "MODULE_2"
+    },
+    "T2_wrong_item_PO.pdf": {
+      "doc_type": "PO",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "REGISTERED",
+      "route": "MODULE_2"
+    },
+    "T3_amount_mismatch_INVOICE.pdf": {
+      "doc_type": "INVOICE",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "UNALLOCATED",
+      "route": "MODULE_2"
+    },
+    "T3_amount_mismatch_PO.pdf": {
+      "doc_type": "PO",
+      "m1_status": "READY_FOR_MODULE_2",
+      "outcome": "REGISTERED",
+      "route": "MODULE_2"
     }
   },
   "po_positions": {
@@ -268,6 +331,21 @@
     "PR-2026-0381": {
       "billed": 0.0,
       "open": 3000.0,
+      "status": "Open - Pending Invoice"
+    },
+    "PR-2026-0401": {
+      "billed": 0.0,
+      "open": 450.0,
+      "status": "Open - Pending Invoice"
+    },
+    "PR-2026-0402": {
+      "billed": 0.0,
+      "open": 500.0,
+      "status": "Open - Pending Invoice"
+    },
+    "PR-2026-0403": {
+      "billed": 0.0,
+      "open": 500.0,
       "status": "Open - Pending Invoice"
     }
   }

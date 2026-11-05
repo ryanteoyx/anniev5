@@ -18,11 +18,12 @@ def test_tour_data_has_a_case_at_every_stage():
     assert [r["case_id"] for r in annie.case_rows(con, [annie.S_DONE])] == [chosen["complete"]]
     assert len(annie.archive_rows(con)) == 1
     assert chosen["pending"] in [r["case_id"] for r in annie.case_rows(con, [annie.S_GR])]
-    assert chosen["open"] in [r["case_id"] for r in annie.case_rows(con, [annie.S_OPEN_PO])]
+    waiting = [r["case_id"] for r in annie.case_rows(con, [annie.S_OPEN_PO])]
+    assert chosen["open"] in waiting and chosen["held"] in waiting
 
 
 def test_every_stop_is_complete():
-    stops = tour.steps(dict(open="CASE-1", pending="CASE-2", complete="CASE-3", calloff="CALL-1"))
+    stops = tour.steps(dict(open="CASE-1", held="CASE-4", pending="CASE-2", complete="CASE-3", calloff="CALL-1"))
     assert stops
     for s in stops:
         assert s["title"] and s["text"] and s["path"] and s["focus"], s
