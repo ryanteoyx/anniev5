@@ -1452,6 +1452,43 @@ VENDOR_MIN = 0.7                      # vendor names must be at least this simil
 CITATION_BONUS = 0.25                 # added when the invoice cites the PO the line belongs to
 ENFORCE_UNIQUE_INVOICE_NUMBER = True  # exact vendor + invoice number may only be allocated once (not fuzzy)
 
+# Guard rails for goods (QTY) lines. The score above decides WHICH PO line an invoice line belongs to; these checks decide
+# whether it may be billed against it WITHOUT a person looking. A line that fails is held in Stage 1 with the reason shown
+# (Manual match can still accept it, with a typed reason).
+PRICE_TOLERANCE = 0.05   # invoice unit price may be at most this share above the PO/PR unit price (lower prices are not blocked)
+ARITH_TOLERANCE = 0.005  # invoice line total may exceed qty x unit price by this share (+0.05 for rounding); discounts are not blocked
+DESC_FLOOR = 0.40        # the invoice line must at least resemble the PO/PR item it is billed against (even if the PO is cited)
+
+def _desc_tokens(s) -> set:
+    return {t[:-1] if len(t) > 3 and t.endswith("s") else t for t in _norm(s).split()}
+
+def desc_match(a, b):
+    """How much two item descriptions resemble each other, 0-1 (None if either is empty): the higher of text_sim and the share
+    of the shorter description's words found in the other ("Toner" in "Printer toner cartridges" counts as a match)."""
+    ta, tb = _desc_tokens(a), _desc_tokens(b)
+    if not ta or not tb:
+        return None
+    return max(text_sim(a, b) or 0.0, len(ta & tb) / min(len(ta), len(tb)))
+
+def line_problems(inv_line: dict, po_line: dict):
+    """Reasons an invoice line must NOT be billed against a goods (QTY) PO line automatically. Returns (problems, description match).
+    Services (AMOUNT) are not checked here: their wording legitimately differs ("Milestone 1" vs "Annual project")."""
+    if po_line["basis"] != "QTY":
+        return [], None
+    out, dm = [], desc_match(inv_line.get("description"), po_line.get("description"))
+    if dm is not None and dm < DESC_FLOOR:
+        out.append(f"'{(inv_line.get('description') or '')[:30]}' does not resemble the PO/PR item "
+                   f"'{(po_line.get('description') or '')[:30]}' (match {dm:.2f}, minimum {DESC_FLOOR:.2f})")
+    qty, price, amount = inv_line.get("qty") or 0, inv_line.get("unit_price") or 0, inv_line.get("amount") or 0
+    po_price = float(po_line.get("unit_price") or 0)
+    billed_price = price if price > 0 else (amount / qty if qty > 0 else 0)
+    if po_price > 0 and billed_price > po_price * (1 + PRICE_TOLERANCE) + 1e-9:
+        out.append(f"unit price {billed_price:,.2f} is {(billed_price / po_price - 1) * 100:.0f}% above the PO/PR price "
+                   f"{po_price:,.2f} (tolerance {PRICE_TOLERANCE:.0%})")
+    if qty > 0 and price > 0 and amount > qty * price * (1 + ARITH_TOLERANCE) + 0.05:
+        out.append(f"line total {amount:,.2f} is more than quantity x unit price = {qty * price:,.2f}")
+    return out, dm
+
 def line_score(inv_line: dict, po_line: dict, cited: bool, sole_open_line: bool) -> float:
     """Confidence that an invoice line belongs to a PO line. One threshold (LINK_THRESHOLD) decides."""
     if cited and sole_open_line:
@@ -1477,14 +1514,16 @@ def normalise_type(t) -> str:
 def _blank(v) -> bool:
     return v is None or str(v).strip() == ""
 
-def _cites_amount(d) -> bool:
-    """Does the document cite any amount (a total, or a unit price / line total on any item)?"""
+def _positive(v) -> bool:
     try:
-        if float(d.get("total") or 0) > 0:
-            return True
+        return float(v) > 0
     except (TypeError, ValueError):
-        pass
-    return any(not _blank(i.get("unit_price")) or not _blank(i.get("total")) for i in d.get("items") or [])
+        return False
+
+def _cites_amount(d) -> bool:
+    """Does the document cite an amount above zero (a total, or a unit price / line total on any item)? A PO/PR that does
+    not is a Call-Off."""
+    return _positive(d.get("total")) or any(_positive(i.get("unit_price")) or _positive(i.get("total")) for i in d.get("items") or [])
 
 def missing_fields(d) -> list[str]:
     """Mandatory-field check used by the Module 1 gate."""
@@ -1533,7 +1572,7 @@ def _new_case_id(con) -> str:
 # 13. MODULE 2 - PO REGISTRATION, INVOICE ALLOCATION AND CASE STATUS
 # =====================================================================================
 def _po_lines(po: dict) -> list[dict]:
-    """PO/PR -> billable lines. Goods: by quantity. Services: by amount if one is cited, else SINGLE (one invoice only)."""
+    """PO/PR -> billable lines. Goods: by quantity. Services: by amount. [] when no billable line can be built (a Call-Off)."""
     items = po.get("items") or []
     if str(po.get("category", "")).lower().startswith("good") and items:
         return [dict(description=i.get("description"), basis="QTY", ordered_qty=float(i["qty"]),
@@ -1542,9 +1581,7 @@ def _po_lines(po: dict) -> list[dict]:
     if total > 0:   # services that cite an amount: tracked by amount (many invoices allowed)
         return [dict(description=po.get("service_description") or "", basis="AMOUNT", ordered_qty=1.0,
                      unit_price=total, ordered_amount=total)]
-    # no amount cited: the PO/PR expects exactly ONE invoice (one-to-one)
-    return [dict(description=po.get("service_description") or "", basis="SINGLE", ordered_qty=1.0,
-                 unit_price=0.0, ordered_amount=0.0)]
+    return []
 
 def _invoice_lines(p: dict) -> list[dict]:
     items = p.get("items") or []
@@ -1560,14 +1597,14 @@ def _cited(p: dict) -> dict:
     return {_ref_norm(r): r for r in refs if r}
 
 def _need(ln: dict, l: dict) -> float:
-    """How much of a PO line an invoice line consumes: qty (goods), 1 (single-invoice service), amount (services by amount)."""
-    return ln["qty"] if l["basis"] == "QTY" else (1.0 if l["basis"] == "SINGLE" else ln["amount"])
+    """How much of a PO line an invoice line consumes: qty (goods) or amount (services)."""
+    return ln["qty"] if l["basis"] == "QTY" else ln["amount"]
 
 def _alloc_qty(ln: dict, l: dict) -> float:
-    return ln["qty"] if l["basis"] == "QTY" else (1.0 if l["basis"] == "SINGLE" else 0.0)
+    return ln["qty"] if l["basis"] == "QTY" else 0.0
 
 def _open(l: dict) -> float:
-    return (l["ordered_qty"] - l["billed_qty"]) if l["basis"] in ("QTY", "SINGLE") else (l["ordered_amount"] - l["billed_amount"])
+    return (l["ordered_qty"] - l["billed_qty"]) if l["basis"] == "QTY" else (l["ordered_amount"] - l["billed_amount"])
 
 def _new_calloff_id(con) -> str:
     year = date.today().year
@@ -1601,11 +1638,11 @@ def register_po(con, doc: dict, rid: str, file_path) -> dict:
             _log(con, rid, None, "REJECTED_PO_REFERENCE_EXISTS", f"{ref} already registered as {r['record_id']}")
             con.commit()
             return dict(record_id=rid, doc_type=PO, outcome="REJECTED_PO_REFERENCE_EXISTS", detail=f"{ref} already registered")
-    if not _cites_amount(doc):   # no amount cited: a Call-Off case, matched manually to several invoices
+    lines = _po_lines(doc) if _cites_amount(doc) else []
+    if not lines:   # no amount cited: a Call-Off case, matched manually to several invoices
         return _open_calloff(con, doc, rid, file_path)
     con.execute("INSERT INTO documents VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (rid, PO, json.dumps(doc), file_path, _now(), "REGISTERED", None, None, None, "[]"))
-    lines = _po_lines(doc)
     for n, ln in enumerate(lines, 1):
         con.execute("INSERT INTO po_lines(po_record_id, po_reference, line_no, description, basis, ordered_qty, unit_price, ordered_amount)"
                     " VALUES(?,?,?,?,?,?,?,?)", (rid, ref, n, ln["description"], ln["basis"], ln["ordered_qty"], ln["unit_price"], ln["ordered_amount"]))
@@ -1647,7 +1684,7 @@ def allocate_invoice(con, case_id: str, force: bool = False) -> dict:
         local = {l["line_id"]: _open(l) for l in po_lines}
         for ln in lines:
             allowed = {ln["po"]} if ln["po"] else (set(cited) if cited else None)
-            scored, other_currency = [], set()
+            scored, other_currency, blocked = [], set(), []
             for l in po_lines:
                 if (text_sim(p.get("vendor_name"), l["vendor"]) or 0) < VENDOR_MIN or local[l["line_id"]] <= 1e-9:
                     continue
@@ -1656,6 +1693,10 @@ def allocate_invoice(con, case_id: str, force: bool = False) -> dict:
                 if not _same_currency(inv_cur, l["currency"]):   # never bill one currency against another
                     other_currency.add((l["po_reference"], l["currency"]))
                     continue
+                problems, dm = line_problems(ln, l)
+                if problems:   # guard rails (description / price / arithmetic): hold for a person instead of billing it
+                    blocked.append((dm if dm is not None else 1.0, l["po_reference"], "; ".join(problems)))
+                    continue
                 is_cited = _ref_norm(l["po_reference"]) in cited or ln["po"] == _ref_norm(l["po_reference"])
                 sole = sum(1 for x in po_lines if x["po_record_id"] == l["po_record_id"] and local[x["line_id"]] > 1e-9) == 1
                 scored.append((line_score(ln, l, is_cited, sole and is_cited), l))
@@ -1663,10 +1704,15 @@ def allocate_invoice(con, case_id: str, force: bool = False) -> dict:
             good = [t for t in scored if t[0] >= LINK_THRESHOLD]
             label = (ln["description"] or "")[:40]
             if not good:
+                blocked.sort(key=lambda b: -b[0])   # show the problem on the PO/PR line that resembles the invoice line most
+                blocked_note = f"{blocked[0][1]}: {blocked[0][2]}" if blocked else ""
+                if blocked and not scored and not other_currency:
+                    reasons.append(f"'{label}' is held for review - {blocked_note}")
+                    continue
                 currency_note = (", ".join(f"{ref} is in {cur}" for ref, cur in sorted(other_currency))
                                  + f" but the invoice is in {inv_cur}") if other_currency else ""
                 if scored:
-                    why = f" (best {scored[0][0]:.2f})" + (f"; {currency_note}" if currency_note else "")
+                    why = f" (best {scored[0][0]:.2f})" + (f"; {currency_note}" if currency_note else "") + (f"; also held: {blocked_note}" if blocked_note else "")
                 elif other_currency:
                     why = f": {currency_note}"
                 else:
@@ -1678,7 +1724,7 @@ def allocate_invoice(con, case_id: str, force: bool = False) -> dict:
             pick = None
             for s, l in good:
                 need = _need(ln, l)
-                if need <= local[l["line_id"]] + (1e-9 if l["basis"] in ("QTY", "SINGLE") else 0.005):
+                if need <= local[l["line_id"]] + (1e-9 if l["basis"] == "QTY" else 0.005):
                     pick = (s, l, need)
                     break
             if not pick:
@@ -1749,7 +1795,7 @@ def refresh_case(con, case_id: str) -> str:
         for lid, (nq, na) in need.items():
             l = con.execute("SELECT basis FROM po_lines WHERE line_id=?", (lid,)).fetchone()
             gq, ga = got.get(lid, [0.0, 0.0])
-            covered &= (gq + 1e-9 >= nq) if l["basis"] in ("QTY", "SINGLE") else (ga + 0.005 >= na)
+            covered &= (gq + 1e-9 >= nq) if l["basis"] == "QTY" else (ga + 0.005 >= na)
         status = S_DONE if covered else S_GR
     con.execute("UPDATE cases SET status=?, updated_at=? WHERE case_id=?", (status, _now(), case_id))
     return status
@@ -1832,7 +1878,7 @@ def case_lines(con, case_id: str) -> list[dict]:
             agg[d["line_id"]] = d
     got, out = _case_receipts(con, case_id), []
     for d in agg.values():
-        qty = d["basis"] in ("QTY", "SINGLE")
+        qty = d["basis"] == "QTY"
         ordered, po_received = (d["ordered_qty"], d["received_qty"]) if qty else (d["ordered_amount"], d["received_amount"])
         billed = d["a_qty"] if qty else d["a_amt"]
         received = got.get(d["line_id"], [0.0, 0.0])[0 if qty else 1]
@@ -1886,15 +1932,14 @@ def submit_gr(con, case_id: str, gr: dict) -> dict:
             raise ValueError("Line does not belong to this case")
         l = lines[lid]
         cap = min(l["needed"], l["room"])
-        if recv > cap + (1e-9 if l["basis"] in ("QTY", "SINGLE") else 0.005):
+        if recv > cap + (1e-9 if l["basis"] == "QTY" else 0.005):
             raise ValueError(f"{l['po_reference']} '{(l['description'] or '')[:30]}': receiving {recv:g} exceeds the {cap:g} this invoice still needs "
                              f"(and the PO/PR has left to receive)")
-        amount = (round(recv * l["unit_price"], 2) if l["basis"] == "QTY"
-                  else round(l["a_amt"] * min(recv, 1.0), 2) if l["basis"] == "SINGLE" else round(recv, 2))
+        amount = round(recv * l["unit_price"], 2) if l["basis"] == "QTY" else round(recv, 2)
         total += amount
         out_lines.append(dict(line_id=lid, po_reference=l["po_reference"], description=l["description"], basis=l["basis"],
-                              qty=recv if l["basis"] in ("QTY", "SINGLE") else None, amount=amount))
-    category = "Services" if all(x["basis"] in ("AMOUNT", "SINGLE") for x in out_lines) else "Goods"
+                              qty=recv if l["basis"] == "QTY" else None, amount=amount))
+    category = "Services" if all(x["basis"] == "AMOUNT" for x in out_lines) else "Goods"
     number = next_ses_number(con, category)
     po_vendor = case_po_docs(con, case_id)[0]["payload"].get("vendor_name")
     payload = dict(doc_type=GR, record_id=number, ses_gr_number=number, case_id=case_id, vendor_name=po_vendor, category=category,
@@ -1903,7 +1948,7 @@ def submit_gr(con, case_id: str, gr: dict) -> dict:
     con.execute("INSERT INTO documents VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (number, GR, json.dumps(payload), None, _now(), "GR_SUBMITTED", case_id, None, None, "[]"))
     for x in out_lines:
-        if x["basis"] in ("QTY", "SINGLE"):
+        if x["basis"] == "QTY":
             con.execute("UPDATE po_lines SET received_qty=received_qty+?, received_amount=received_amount+? WHERE line_id=?",
                         (x["qty"], x["amount"], x["line_id"]))
         else:
@@ -1918,7 +1963,7 @@ def submit_gr(con, case_id: str, gr: dict) -> dict:
 # 14C. MANUAL MATCHING, UNMATCH AND INVOICE DISMISSAL
 # =====================================================================================
 def _reverse_allocations(con, case_id: str) -> int:
-    """Give back everything an invoice case billed against PO lines (works for qty, amount and single-invoice lines)."""
+    """Give back everything an invoice case billed against PO lines (works for qty and amount lines)."""
     rows = con.execute("SELECT * FROM allocations WHERE case_id=?", (case_id,)).fetchall()
     for a in rows:
         con.execute("UPDATE po_lines SET billed_qty=MAX(0, billed_qty-?), billed_amount=MAX(0, billed_amount-?) WHERE line_id=?",
@@ -1939,8 +1984,7 @@ def _void_case_receipts(con, case_id: str) -> int:
     return n
 
 def delete_invoice_case(con, case_id: str, reason: str = "") -> dict:
-    """Dismiss (delete) an invoice in Stage 1 or Stage 2. Its billing is reversed on the PO/PR lines (a single-invoice
-    PO/PR becomes open again), the file hash is forgotten so the invoice can be resubmitted later, and the audit log keeps a line.
+    """Dismiss (delete) an invoice in Stage 1 or Stage 2. Its billing is reversed on the PO/PR lines, the file hash is forgotten so the invoice can be resubmitted later, and the audit log keeps a line.
     GR/SES batches raised for this invoice-PO match are voided with it (their received quantities are given back)."""
     c = con.execute("SELECT * FROM cases WHERE case_id=?", (case_id,)).fetchone()
     if not c or c["status"] not in (S_OPEN_PO, S_GR):
@@ -2005,11 +2049,11 @@ def manual_candidates(con, case_id: str) -> list[dict]:
     c = con.execute("SELECT * FROM cases WHERE case_id=?", (case_id,)).fetchone()
     inv = get_doc(con, c["inv_record_id"])["payload"]
     vendor, inv_cur = inv.get("vendor_name"), _currency(inv)
-    unit = {"QTY": "qty", "AMOUNT": "amount", "SINGLE": "single invoice"}
+    unit = {"QTY": "qty", "AMOUNT": "amount"}
     out = []
     for l in _po_line_universe(con).values():
         left = _open(l)
-        if left <= (1e-9 if l["basis"] in ("QTY", "SINGLE") else 0.005) or not _same_currency(inv_cur, l["currency"]):
+        if left <= (1e-9 if l["basis"] == "QTY" else 0.005) or not _same_currency(inv_cur, l["currency"]):
             continue
         vs = text_sim(vendor, l["vendor"]) or 0.0
         out.append(dict(line_id=l["line_id"], po_reference=l["po_reference"], vendor=l["vendor"], description=l["description"],
@@ -2019,8 +2063,8 @@ def manual_candidates(con, case_id: str) -> list[dict]:
     return out
 
 def manual_match(con, case_id: str, rows: list[dict], reason: str = "", dry_run: bool = False) -> dict:
-    """Match an invoice by hand. rows = [{inv_line, po_line_id, value}] where value is a quantity (goods line), an amount
-    (service by amount) or any positive number (single-invoice service: it takes the whole invoice line).
+    """Match an invoice by hand. rows = [{inv_line, po_line_id, value}] where value is a quantity (goods line) or an amount
+    (service line).
     One invoice line can be split over several PO lines; every invoice line must end up 100% allocated.
     Capacity limits and the one-invoice rule still apply. dry_run only reports scores, warnings and errors."""
     case = con.execute("SELECT * FROM cases WHERE case_id=?", (case_id,)).fetchone()
@@ -2034,7 +2078,7 @@ def manual_match(con, case_id: str, rows: list[dict], reason: str = "", dry_run:
     for l in pol.values():
         if _open(l) > 1e-9:
             open_per_po[l["po_record_id"]] = open_per_po.get(l["po_record_id"], 0) + 1
-    errors, out, cover, single_used = [], [], {i: 0.0 for i in range(1, len(lines) + 1)}, set()
+    errors, out, cover = [], [], {i: 0.0 for i in range(1, len(lines) + 1)}
     for r in rows:
         try:
             i, pid, v = int(r["inv_line"]), int(r["po_line_id"]), float(r["value"] or 0)
@@ -2058,15 +2102,10 @@ def manual_match(con, case_id: str, rows: list[dict], reason: str = "", dry_run:
         if l["basis"] == "QTY":
             need, qty, frac = v, v, (v / ln["qty"] if ln["qty"] else 1.0)
             amount = round(ln["amount"] * frac, 2)
-        elif l["basis"] == "AMOUNT":
+        else:   # AMOUNT
             need, qty, frac, amount = v, 0.0, (v / ln["amount"] if ln["amount"] else 1.0), round(v, 2)
-        else:   # SINGLE: the one and only invoice, whole line
-            need, qty, frac, amount = 1.0, 1.0, 1.0, round(ln["amount"], 2)
-            if pid in single_used:
-                errors.append(f"{label}: a single-invoice PO/PR line can be used only once")
-                continue
-            single_used.add(pid)
-        tol = 1e-9 if l["basis"] in ("QTY", "SINGLE") else 0.005
+
+        tol = 1e-9 if l["basis"] == "QTY" else 0.005
         if need > local[pid] + tol:
             errors.append(f"{label}: only {max(local[pid], 0):g} left to bill, you entered {need:g}")
             continue
@@ -2081,8 +2120,9 @@ def manual_match(con, case_id: str, rows: list[dict], reason: str = "", dry_run:
             warn.append(f"automatic score {score:.2f} is below {LINK_THRESHOLD}")
         if vs < VENDOR_MIN:
             warn.append(f"vendor name looks different (similarity {vs:.2f})")
+        warn += line_problems(ln, l)[0]   # the automatic guard rails become warnings; confirming needs the typed reason
         out.append(dict(inv_line=i, po_line_id=pid, po_reference=l["po_reference"], po_item=l["description"], basis=l["basis"],
-                        applied=need if l["basis"] != "SINGLE" else "whole line", qty=qty, amount=amount, score=score,
+                        applied=need, qty=qty, amount=amount, score=score,
                         vendor_similarity=vs, warning="; ".join(warn)))
     if not rows:
         errors.append("Nothing selected")
@@ -2116,11 +2156,11 @@ def manual_match(con, case_id: str, rows: list[dict], reason: str = "", dry_run:
 def po_detail(con, record_id: str) -> dict:
     """Everything the PO preview page shows: the document, its lines with balances, and the invoices charged to it."""
     doc = get_doc(con, record_id)
-    modes = {"QTY": "Goods (by quantity)", "AMOUNT": "Services (by amount)", "SINGLE": "Services (single invoice)"}
+    modes = {"QTY": "Goods (by quantity)", "AMOUNT": "Services (by amount)"}
     lines = []
     for l in con.execute("SELECT * FROM po_lines WHERE po_record_id=? ORDER BY line_no", (record_id,)):
         l = dict(l)
-        qty = l["basis"] in ("QTY", "SINGLE")
+        qty = l["basis"] == "QTY"
         lines.append(dict(line=l["line_no"], item=l["description"], basis=modes[l["basis"]],
                           ordered=l["ordered_qty"] if qty else l["ordered_amount"],
                           billed=l["billed_qty"] if qty else l["billed_amount"],
@@ -2416,16 +2456,15 @@ def archive_rows(con) -> list[dict]:
 def po_rows(con) -> list[dict]:
     """PO/PR positions: what is ordered, billed and received, and what can still be billed."""
     rows = []
-    modes = {"QTY": "Goods (by quantity)", "AMOUNT": "Services (by amount)", "SINGLE": "Services (single invoice)"}
+    modes = {"QTY": "Goods (by quantity)", "AMOUNT": "Services (by amount)"}
     for r in con.execute("SELECT record_id FROM documents WHERE doc_type=? ORDER BY received_at, record_id", (PO,)):
         d = get_doc(con, r[0])
         ls = [dict(x) for x in con.execute("SELECT * FROM po_lines WHERE po_record_id=? ORDER BY line_no", (r[0],))]
         if not ls:   # Call-Off PO/PR: handled in the Call-Offs tab
             continue
-        single = all(l["basis"] == "SINGLE" for l in ls)
         ordered = sum(l["ordered_amount"] for l in ls)
-        open_bill = sum(max(0.0, _open(l)) * (l["unit_price"] if l["basis"] == "QTY" else 1.0) for l in ls if l["basis"] != "SINGLE")
-        any_open = any(_open(l) > (1e-9 if l["basis"] in ("QTY", "SINGLE") else 0.005) for l in ls)
+        open_bill = sum(max(0.0, _open(l)) * (l["unit_price"] if l["basis"] == "QTY" else 1.0) for l in ls)
+        any_open = any(_open(l) > (1e-9 if l["basis"] == "QTY" else 0.005) for l in ls)
         billed = sum(l["billed_qty"] * l["unit_price"] if l["basis"] == "QTY" else l["billed_amount"] for l in ls)
         billed_any = any(l["billed_qty"] > 0 or l["billed_amount"] > 0 for l in ls)
         received = sum(l["received_qty"] * l["unit_price"] if l["basis"] == "QTY" else l["received_amount"] for l in ls)
@@ -2434,8 +2473,8 @@ def po_rows(con) -> list[dict]:
             status = S_BILLED
         p = d["payload"]
         rows.append(dict(record_id=r[0], po_reference=p.get("po_reference"), vendor=p.get("vendor_name"), mode=modes[ls[0]["basis"]],
-                         status=status, ordered=None if single else round(ordered, 2), billed=round(billed, 2), received=round(received, 2),
-                         open_to_bill=None if single else round(open_bill, 2), date=p.get("date")))
+                         status=status, ordered=round(ordered, 2), billed=round(billed, 2), received=round(received, 2),
+                         open_to_bill=round(open_bill, 2), date=p.get("date")))
     return rows
 
 def counts(con) -> dict:
