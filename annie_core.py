@@ -1385,6 +1385,24 @@ def text_sim(a, b):
     ta, tb = set(a.split()), set(b.split())
     return max(SequenceMatcher(None, a, b).ratio(), len(ta & tb) / len(ta | tb))
 
+LEGAL_SUFFIXES = {"pte", "ltd", "limited", "llp", "lp", "llc", "inc", "incorporated", "corp", "corporation", "co", "company",
+                  "plc", "pty", "gmbh", "ag", "bv", "sa", "sdn", "bhd", "berhad", "private"}
+
+def _vendor_norm(s) -> str:
+    """Vendor name for comparison: _norm() then legal-form words dropped ('ABC Pte. Ltd.' -> 'abc'). Falls back to the
+    full normalised name when nothing else is left, so a name made only of suffix words still compares."""
+    full = _norm(s)
+    core = " ".join(t for t in full.split() if t not in LEGAL_SUFFIXES)
+    return core or full
+
+def vendor_sim(a, b):
+    """Like text_sim, for vendor names only: legal suffixes (Pte Ltd, Sdn Bhd, LLC...) do not count towards similarity."""
+    a, b = _vendor_norm(a), _vendor_norm(b)
+    if not a or not b:
+        return None
+    ta, tb = set(a.split()), set(b.split())
+    return max(SequenceMatcher(None, a, b).ratio(), len(ta & tb) / len(ta | tb))
+
 def ref_sim(a, b):
     a, b = _ref_norm(a), _ref_norm(b)
     return SequenceMatcher(None, a, b).ratio() if a and b else None
@@ -1448,7 +1466,8 @@ def weighted(scores: dict, weights: dict) -> float:
     return round(sum(weights[k] * s for k, s in use.items()) / w, 4) if w else 0.0
 
 LINE_W = dict(desc=0.6, price=0.4)    # invoice line vs PO line
-VENDOR_MIN = 0.7                      # vendor names must be at least this similar (tightened from 0.6)
+VENDOR_MIN = 0.7                      # vendor names must be at least this similar (manual-match warnings, candidate lists)
+VENDOR_AUTO = 0.90                    # vendor names must be at least this similar for AUTOMATIC allocation (legal suffixes ignored)
 CITATION_BONUS = 0.25                 # added when the invoice cites the PO the line belongs to
 ENFORCE_UNIQUE_INVOICE_NUMBER = True  # exact vendor + invoice number may only be allocated once (not fuzzy)
 
@@ -1686,7 +1705,7 @@ def allocate_invoice(con, case_id: str, force: bool = False) -> dict:
             allowed = {ln["po"]} if ln["po"] else (set(cited) if cited else None)
             scored, other_currency, blocked = [], set(), []
             for l in po_lines:
-                if (text_sim(p.get("vendor_name"), l["vendor"]) or 0) < VENDOR_MIN or local[l["line_id"]] <= 1e-9:
+                if (vendor_sim(p.get("vendor_name"), l["vendor"]) or 0) < VENDOR_AUTO or local[l["line_id"]] <= 1e-9:
                     continue
                 if allowed is not None and _ref_norm(l["po_reference"]) not in allowed:
                     continue
@@ -1717,7 +1736,7 @@ def allocate_invoice(con, case_id: str, force: bool = False) -> dict:
                     why = f": {currency_note}"
                 else:
                     spent = sorted({l["po_reference"] for l in po_lines if (allowed is None or _ref_norm(l["po_reference"]) in allowed)
-                                    and (text_sim(p.get("vendor_name"), l["vendor"]) or 0) >= VENDOR_MIN})
+                                    and (vendor_sim(p.get("vendor_name"), l["vendor"]) or 0) >= VENDOR_AUTO})
                     why = f": {', '.join(spent)} has nothing left to bill" if spent else " (no PO/PR for this vendor)"
                 reasons.append(f"'{label}' matches no open PO line" + why)
                 continue
@@ -1823,7 +1842,7 @@ def process_document(con, doc: dict, file_path=None) -> dict:
         for r in con.execute("SELECT record_id, payload FROM documents WHERE doc_type=?", (INV,)):
             o = json.loads(r["payload"])
             if _ref_norm(o.get("invoice_reference")) == _ref_norm(doc.get("invoice_reference")) \
-                    and (text_sim(o.get("vendor_name"), doc.get("vendor_name")) or 0) >= 0.9:
+                    and (vendor_sim(o.get("vendor_name"), doc.get("vendor_name")) or 0) >= 0.9:
                 _log(con, rid, None, "REJECTED_INVOICE_NUMBER_EXISTS", f"{doc.get('invoice_reference')} already held as {r['record_id']}")
                 con.commit()
                 return dict(record_id=rid, doc_type=INV, outcome="REJECTED_INVOICE_NUMBER_EXISTS",
@@ -2055,7 +2074,7 @@ def manual_candidates(con, case_id: str) -> list[dict]:
         left = _open(l)
         if left <= (1e-9 if l["basis"] == "QTY" else 0.005) or not _same_currency(inv_cur, l["currency"]):
             continue
-        vs = text_sim(vendor, l["vendor"]) or 0.0
+        vs = vendor_sim(vendor, l["vendor"]) or 0.0
         out.append(dict(line_id=l["line_id"], po_reference=l["po_reference"], vendor=l["vendor"], description=l["description"],
                         basis=l["basis"], open=left, unit_price=l["unit_price"], vendor_sim=round(vs, 3), line_no=l["line_no"],
                         label=f"#{l['line_id']} {l['po_reference']} | {(l['description'] or '')[:45]} | left {left:g} {unit[l['basis']]} | {l['vendor']}"))
@@ -2114,7 +2133,7 @@ def manual_match(con, case_id: str, rows: list[dict], reason: str = "", dry_run:
         is_cited = _ref_norm(l["po_reference"]) in cited or ln["po"] == _ref_norm(l["po_reference"])
         sole = open_per_po.get(l["po_record_id"], 0) == 1
         score = line_score(ln, l, is_cited, sole and is_cited)
-        vs = round(text_sim(p.get("vendor_name"), l["vendor"]) or 0.0, 3)
+        vs = round(vendor_sim(p.get("vendor_name"), l["vendor"]) or 0.0, 3)
         warn = []
         if score < LINK_THRESHOLD:
             warn.append(f"automatic score {score:.2f} is below {LINK_THRESHOLD}")
@@ -2209,7 +2228,7 @@ def calloff_open_invoices(con, case_id: str) -> list[dict]:
     out = []
     for r in con.execute("SELECT * FROM cases WHERE status=? AND calloff_id IS NULL ORDER BY case_id", (S_OPEN_PO,)):
         p = get_doc(con, r["inv_record_id"])["payload"]
-        vs = round(text_sim(vendor, p.get("vendor_name")) or 0.0, 3)
+        vs = round(vendor_sim(vendor, p.get("vendor_name")) or 0.0, 3)
         amt = doc_total(p)
         out.append(dict(case_id=r["case_id"], vendor_sim=vs, vendor=p.get("vendor_name"), invoice_reference=p.get("invoice_reference"),
                         label=f"{r['case_id']} | {p.get('invoice_reference')} | {p.get('vendor_name')} | "
@@ -2237,7 +2256,7 @@ def confirm_calloff(con, case_id: str, inv_case_ids: list, reason: str) -> dict:
             raise ValueError(f"{i} is no longer an open invoice")
         rows.append(r)
         p = get_doc(con, r["inv_record_id"])["payload"]
-        vs = text_sim(po.get("vendor_name"), p.get("vendor_name")) or 0.0
+        vs = vendor_sim(po.get("vendor_name"), p.get("vendor_name")) or 0.0
         if vs < VENDOR_MIN:
             warns.append(f"{i}: vendor name looks different (similarity {vs:.2f})")
         if not _same_currency(_currency(po), _currency(p)):
