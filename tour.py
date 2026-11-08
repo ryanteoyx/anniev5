@@ -1,8 +1,8 @@
 """Guided "Play demo" tour for Annie: walks the real app like a stakeholder would.
 
 Pressing Play opens the live pages, not screenshots. A fake cursor moves to each control and clicks it, the view zooms
-in on one feature and stops so the presenter can talk, then Next zooms out and moves on. The script comes from the
-slide text in demo.py, reordered to follow one invoice from arrival to archive.
+in on one feature and stops so the presenter can talk, then Next zooms out and moves on. The stops and captions
+follow the team's voice-over script ("demo script" tab of the project Google Doc): one invoice, arrival to archive.
 
 The tour runs on its own private copy of the demo data (see prepare), because the main database is shared by every
 visitor. That copy also has one Complete case and one posted case, which the normal demo data does not. The tour only
@@ -36,10 +36,11 @@ def _btn(name: str) -> str:
     return _key(name) + " button"
 
 
-def _stop(section, title, text, path, focus, zoom=2.2):
+def _stop(section, title, text, path, focus, zoom=2.2, sweep=False):
     """One pause: `path` is the clicks that reach the page from anywhere, `focus` is the element to zoom in on, and
-    `zoom` caps the scale (tables are drawn as images, so they blur if enlarged too far)."""
-    return dict(section=section, title=title, text=text, path=path, focus=focus, zoom=zoom)
+    `zoom` caps the scale (tables are drawn as images, so they blur if enlarged too far). `sweep` pans a table that is
+    wider than the screen slowly to its last column, so every column is seen."""
+    return dict(section=section, title=title, text=text, path=path, focus=focus, zoom=zoom, sweep=sweep)
 
 
 def steps(c: dict) -> list[dict]:
@@ -51,51 +52,51 @@ def steps(c: dict) -> list[dict]:
     s1_case, calloff_case = s1 + [_btn(f"s1a_{c['open']}")], calloff + [_btn(f"co_open_{c['calloff']}")]
     s2_case, s3_case = s2 + [_btn(f"s2_{c['pending']}")], s3 + [_btn(f"s3_{c['complete']}")]
     review_case, s1_manual = review + [expander], s1_case + [expander]
+    dismiss = f'[data-testid="stExpander"]:has({_key("dis_ok_" + c["open"])})'
     table = '[data-testid="stDataFrame"]'
     right = '.st-key-detail_cols [data-testid="stColumn"]:nth-child(2)'
     return [
-        _stop("Dashboard", "Everything at a glance", "Live counts of what is waiting, in process order. Select any tile to jump straight to that list.",
+        _stop("Dashboard", "Everything at a glance", "Six tiles: documents processed, needs review, open, call-offs, pending GR/SES and complete. Select any tile to jump straight to that list.",
               home, _key("tiles")),
-        _stop("Dashboard", "Work waiting, always visible", "The same counts appear as bubbles in the sidebar, so you always know where work is pending.",
+        _stop("Dashboard", "Work waiting, always visible", "The number of documents waiting in each stage appears in the sidebar, so you always know where work is pending.",
               home, _key("side_processing")),
-        _stop("Submit Document", "Documents come in here", "Upload PDFs, images, Word, text or spreadsheet files in bulk, or let Annie read a mailbox "
-              "on a schedule. The mailbox is not connected on this demo site.", submit, _key("submit_cards"), zoom=1.3),
-        _stop("Submit Document", "Every file gets a result", "Module 1 checks each file for duplicates, reads it and checks the mandatory fields. "
-              "PO/PRs are registered, invoices go to matching, and incomplete files go to Intake Review.", submit, _key("results_top"), zoom=1.5),
-        _stop("Intake Review", "Nothing incomplete slips through", "Only documents with every mandatory field go on to matching. The rest wait here for a person.",
+        _stop("Submit Document", "Documents come in here", "To start the workflow, upload files under Upload documents: PDFs, images, Word, text or spreadsheets, in bulk.", submit, _key("card_upload")),
+        _stop("Submit Document", "Or straight from the inbox", "Or connect a mailbox and let Annie read it on a schedule. It is not connected on this demo site.", submit, _key("card_email")),
+        _stop("Submit Document", "Every file gets a result", "Each file is listed with its status and where it was routed. Every document passes Module 1 first: duplicate check, text extraction and field check.", submit, _key("results_top"), zoom=1.5),
+        _stop("Intake Review", "Nothing incomplete slips through", "Only documents with every mandatory field go on to matching. The rest are routed here for review.",
               review, '[data-testid="stExpander"]'),
-        _stop("Intake Review", "See exactly what is missing", "Annie names the missing fields in plain words, next to the original file. "
-              "This invoice has no date or invoice number.", review_case, '[data-testid="stExpanderDetails"] [data-testid="stColumn"]:nth-child(2)'),
-        _stop("Stage 1: Open cases", "Why an invoice is waiting", "Each waiting invoice shows the reason in plain English. This one is held because its unit price is far above the PO/PR price.",
+        _stop("Intake Review", "See exactly what is missing", "The original file sits next to exactly what is missing. This invoice has no date and no invoice reference.", review_case, '[data-testid="stExpanderDetails"] [data-testid="stColumn"]:nth-child(2)'),
+        _stop("Stage 1: Open cases", "Why an invoice is waiting", "Each pending invoice explains its status. This one is held because its unit price is far above the PO/PR price. A new PO/PR retries every waiting invoice.",
               s1, f'{_key("tbl_s1a")} [data-testid="stHorizontalBlock"]:has({_key("s1a_" + c["held"])})'),
-        _stop("Stage 1: Open cases", "Balances on every PO/PR", "Ordered, billed, received and open to bill, for every PO/PR that is not fully billed.",
+        _stop("Stage 1: Open cases", "Balances on every PO/PR", "Ordered, billed and received for every PO/PR that is not fully billed yet.",
               s1, _key("tbl_s1b")),
-        _stop("Stage 1: Open cases", "Overbilling is caught", "Opening a case shows why it stopped. Here the invoice bills more than the PO/PR has left, so it cannot be allocated.",
+        _stop("Stage 1: Open cases", "Overbilling is caught", "Open an invoice to see why it is waiting. This one bills more than the PO/PR has left, so it cannot be allocated.",
               s1_case, f'{right} [data-testid="stAlert"]'),
-        _stop("Stage 1: Open cases", "A person can resolve it", "Match manually: choose the PO/PR line for each invoice line. A typed reason is required, and it goes in the audit log.",
+        _stop("Stage 1: Open cases", "A person can resolve it", "Match manually: choose a PO/PR line for each invoice line. A reason is required, and it goes into the audit log.",
               s1_manual, '[data-testid="stForm"]', zoom=1.5),
-        _stop("Call-Offs", "PO/PRs with no amount", "A PO/PR that cites no amount is never matched automatically. Each one opens its own case.",
+        _stop("Stage 1: Open cases", "Or dismiss it", "Dismiss invoice deletes the document and reverses any billing, so the file can be resubmitted.", s1_manual + [f"{dismiss} summary"], dismiss, zoom=1.6),
+        _stop("Call-Offs", "PO/PRs with no amount", "A PO/PR with no amount is never matched automatically. It is routed to Call-Offs.",
               calloff, _key("tbl_calloffs")),
-        _stop("Call-Offs", "Pick the invoices", "Choose the invoices that bill against this PO/PR and give a reason. Annie warns if a vendor name looks different.",
+        _stop("Call-Offs", "Pick the invoices", "Choose the open invoices that bill against this PO/PR and give a reason. Annie warns if a vendor name looks different.",
               calloff_case, _key(f"co_sel_{c['calloff']}")),
-        _stop("Stage 2: Pending GR/SES", "Matched, waiting for receipt", "These invoices are already allocated to PO/PR lines, with a link score. Now the goods or services must be confirmed.",
+        _stop("Stage 2: Pending GR/SES", "Matched, waiting for receipt", "Matched invoices waiting for goods or services to be received, with the status and link score of every case.",
               s2, _key("tbl_s2")),
-        _stop("Stage 2: Pending GR/SES", "Line-by-line allocation", "One invoice can bill several PO/PRs. This table shows ordered, billed and received for each line.",
+        _stop("Stage 2: Pending GR/SES", "Line-by-line allocation", "Open a case to record what was received. One invoice can bill several PO/PRs; this table shows ordered, billed and received for each line.",
               s2_case, f"{right} {table}", zoom=1.6),
-        _stop("Stage 2: Pending GR/SES", "Record what was received", "The GR/SES number is generated. Partial deliveries are allowed, and each batch is capped by what is left to receive.",
+        _stop("Stage 2: Pending GR/SES", "Record what was received", "The GR/SES number is generated. Enter what arrived in each batch: partial deliveries are allowed, capped by what the invoice still needs and the PO/PR has left.",
               s2_case, '[data-testid="stForm"]'),
-        _stop("Stage 3: Complete", "Three-way match complete", "Invoice, PO/PR and receipts agree. These cases are ready to post.",
+        _stop("Stage 3: Complete", "Three-way match complete", "The three-way match is done, and these cases are ready to post.",
               s3, _key("tbl_s3")),
-        _stop("Stage 3: Complete", "Everything in one place", "The allocation shows nothing left to receive, and every GR/SES batch for this match is listed.",
+        _stop("Stage 3: Complete", "Everything in one place", "Open a case to review it: the allocation and receipts show nothing is left to receive.",
               s3_case, f"{right} {table}", zoom=1.6),
-        _stop("Stage 3: Complete", "One click to post", "Post downloads the case folder as a ZIP: invoice, matched PO/PRs, each GR/SES and a summary. It also moves the case to the archive.",
-              s3_case, _key(f"post_{c['complete']}")),
-        _stop("Complete Archive", "Posted cases stay on record", "Vendor, invoice, PO/PR, amount and posting date for every posted case. The package can be downloaded again.",
+        _stop("Stage 3: Complete", "One click to post", "Post downloads the case folder as a ZIP. The case leaves Stage 3 and is archived.",
+              s3_case, _key(f"post_{c['complete']}"), zoom=1.6),
+        _stop("Complete Archive", "Posted cases stay on record", "Open an archived case to view it, or download its package again.",
               [_btn("side_archive")], _key("tbl_archive")),
-        _stop("Documents", "One row per record", "How each document arrived, what Module 1 decided and what Module 2 did with it.",
-              [_btn("side_docs")], table),
-        _stop("Audit Log", "The evidence trail", "Every event, newest first: receipts, allocations, duplicates, manual matches and postings.",
-              [_btn("side_audit")], table),
+        _stop("Documents", "One row per record", "Every document: how it arrived, what Module 1 decided, what Module 2 did with it, any missing fields and the linked case.",
+              [_btn("side_docs")], table, sweep=True),
+        _stop("Audit Log", "The evidence trail", "The evidence trail of every event that happened, newest first.",
+              [_btn("side_audit")], table, sweep=True),
     ]
 
 
@@ -174,6 +175,9 @@ html.annie-tour [data-testid="stStatusWidget"], html.annie-tour [data-testid="st
 /* the tables must fit on a laptop screen without zooming the browser out: narrower page margins, and the case pages put
    the allocation and GR/SES panel full width above the source documents instead of in a half-width column */
 html.annie-tour [data-testid="stMainBlockContainer"] {padding-left:1.5rem !important; padding-right:1.5rem !important;}
+html.annie-tour [data-testid="stSidebar"] {width:244px !important; min-width:244px !important; max-width:244px !important;}
+html.annie-tour [class*="st-key-tbl_"] [data-testid="stHorizontalBlock"] {min-width:900px !important;}   /* list rows fit the screen */
+html.annie-tour [data-testid="stMain"] [class*="st-key-tbl_"] button[kind] {padding:.2rem .6rem;}   /* so Open and Package keep their words */
 html.annie-tour .st-key-detail_cols > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"] {flex-wrap:wrap !important;}
 html.annie-tour .st-key-detail_cols > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]
     {flex:1 1 100% !important; min-width:100% !important;}
@@ -272,7 +276,13 @@ ENGINE = """
     const top = main.scrollTop + r.top - m.top - Math.max(16, (free - r.height) / 2);
     if (Math.abs(top - main.scrollTop) < 8) return;
     main.scrollTo({top, behavior: 'smooth'});
-    await sleep(620);
+    // a long scroll takes longer than a short one: wait until it has stopped, or the zoom frames the wrong spot
+    let last = -1, still = 0;
+    for (const end = Date.now() + 2000; Date.now() < end && still < 3; ) {
+      await sleep(80);
+      still = Math.abs(main.scrollTop - last) < 1 ? still + 1 : 0;
+      last = main.scrollTop;
+    }
   }
 
   async function clickOn(sel, shown) {
@@ -300,8 +310,33 @@ ENGINE = """
     cursor.style.transition = 'transform .85s cubic-bezier(.65,0,.25,1), opacity .25s ease';
     cursor.style.transform = `translate(${cx = left + (small ? w / 2 : w - 18)}px, ${cy = top + (small ? h / 2 : h - 18)}px)`;
     await sleep(900);
+    // the page can still settle while the camera moves (rows above re-measure): frame what is really there now
+    let now = e.getBoundingClientRect();
+    if (e.isConnected && (Math.abs(now.top - top) > 6 || Math.abs(now.left - left) > 6)) {
+      setCamera(x + left - now.left, Math.min(0, y + top - now.top), s);
+      await sleep(560);
+      now = e.getBoundingClientRect();
+      cursor.style.transform = `translate(${cx = now.left + (small ? now.width / 2 : now.width - 18)}px, ${cy = now.top + (small ? now.height / 2 : now.height - 18)}px)`;
+    }
+    Object.assign(ring.style, {left: now.left - pad + 'px', top: now.top - pad + 'px', width: now.width + 2 * pad + 'px', height: now.height + 2 * pad + 'px'});
     cursor.style.transition = '';
     ring.classList.add('on');
+  }
+
+  async function sweep(e) {   // pan a wide table from its first column to its last while the presenter talks
+    const sc = e.querySelector('.dvn-scroller');
+    if (!sc || sc.scrollWidth - sc.clientWidth < 8) return;
+    await sleep(900);
+    const from = sc.scrollLeft, to = sc.scrollWidth - sc.clientWidth, ms = Math.min(4200, 900 + (to - from) * 5), t0 = performance.now();
+    await new Promise((done) => {
+      const tick = (now) => {
+        if (gone) return done();
+        const k = Math.min(1, (now - t0) / ms), ease = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+        sc.scrollLeft = from + (to - from) * ease;
+        k < 1 ? requestAnimationFrame(tick) : done();
+      };
+      requestAnimationFrame(tick);
+    });
   }
 
   function say_(k, t, s) { kick.textContent = k; ttl.textContent = t; say.textContent = s; }
@@ -333,6 +368,7 @@ ENGINE = """
       const r = e.getBoundingClientRect();
       await moveCursor(r.left + r.width / 2, r.top + r.height / 2, !shown);
       await zoomIn(find(step.focus) || e, step.zoom);
+      if (step.sweep && !gone) await sweep(find(step.focus) || e);
     }
     busy = false; paint();
   }
