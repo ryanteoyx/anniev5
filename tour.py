@@ -58,10 +58,10 @@ def steps(c: dict) -> list[dict]:
               home, _key("tiles")),
         _stop("Dashboard", "Work waiting, always visible", "The same counts appear as bubbles in the sidebar, so you always know where work is pending.",
               home, _key("side_processing")),
-        _stop("Submit Document", "Documents come in here", "Upload PDFs, images, Word, text or spreadsheet files in bulk. Each one goes through Module 1 first: "
-              "duplicate check, text extraction and field check.", submit, _key("card_upload")),
-        _stop("Submit Document", "Or straight from the inbox", "Annie can also read a mailbox on a schedule, so supplier emails need no manual upload. It is not connected on this demo site.",
-              submit, _key("card_email")),
+        _stop("Submit Document", "Documents come in here", "Upload PDFs, images, Word, text or spreadsheet files in bulk, or let Annie read a mailbox "
+              "on a schedule. The mailbox is not connected on this demo site.", submit, _key("submit_cards"), zoom=1.3),
+        _stop("Submit Document", "Every file gets a result", "Module 1 checks each file for duplicates, reads it and checks the mandatory fields. "
+              "PO/PRs are registered, invoices go to matching, and incomplete files go to Intake Review.", submit, _key("results_top"), zoom=1.5),
         _stop("Intake Review", "Nothing incomplete slips through", "Only documents with every mandatory field go on to matching. The rest wait here for a person.",
               review, '[data-testid="stExpander"]'),
         _stop("Intake Review", "See exactly what is missing", "Annie names the missing fields in plain words, next to the original file. "
@@ -99,10 +99,13 @@ def steps(c: dict) -> list[dict]:
     ]
 
 
-def _seed(con) -> dict:
-    """Load the sample documents and move two cases forward, using the normal engine calls. Returns the featured cases."""
+def _seed(con, results: list | None = None) -> dict:
+    """Load the sample documents and move two cases forward, using the normal engine calls. Returns the featured cases;
+    the per-file intake results are added to `results` (shown under "Results this session" while the tour runs)."""
     for p in sorted(SAMPLES.glob("*.pdf")):
-        annie.ingest_file(con, p.name, p.read_bytes(), channel="UPLOAD")
+        out = annie.ingest_file(con, p.name, p.read_bytes(), channel="UPLOAD")
+        if results is not None:
+            results += out
     case = {r["invoice_reference"]: r["case_id"] for r in annie.case_rows(con, [annie.S_OPEN_PO, annie.S_GR])}
     chosen = dict(open=case["LS-0457"], held=case["ATS-INV-4101"], pending=case["ZH/26/1230"], complete=case["AOS-INV-31001"],
                   calloff=next(r["case_id"] for r in annie.calloff_rows(con, [annie.S_CALLOFF]) if "GreenGrocer" in r["vendor"]))
@@ -117,16 +120,22 @@ def _seed(con) -> dict:
 
 @st.cache_resource(show_spinner="Preparing the demo...")
 def prepare():
-    """The tour's private database and script, built once per app start. Returns (database path, steps)."""
+    """The tour's private database and script, built once per app start. Returns (database path, steps, intake results)."""
     path = Path(tempfile.mkdtemp(prefix="annie-tour-")) / "tour.db"
     con = annie.connect(path)
-    chosen = _seed(con)
+    results = []
+    chosen = _seed(con, results)
     con.close()
-    return path, steps(chosen)
+    return path, steps(chosen), results
 
 
 def db_path():
     return prepare()[0]
+
+
+def results():
+    """What the Submit page lists under "Results this session" during the tour: how each sample was routed on intake."""
+    return prepare()[2]
 
 
 # ---- state -----------------------------------------------------------------------------------------------------
@@ -162,6 +171,13 @@ html.annie-tour .stApp {transform-origin:0 0; transition:transform .85s cubic-be
                         transform:translate(var(--tour-x,0px),var(--tour-y,0px)) scale(var(--tour-s,1));}
 html.annie-tour [data-testid="stStatusWidget"], html.annie-tour [data-testid="stHeader"] {display:none !important;}
 .st-key-tour_hidden {position:absolute; left:-9999px; width:1px; height:1px; overflow:hidden;}
+/* the tables must fit on a laptop screen without zooming the browser out: narrower page margins, and the case pages put
+   the allocation and GR/SES panel full width above the source documents instead of in a half-width column */
+html.annie-tour [data-testid="stMainBlockContainer"] {padding-left:1.5rem !important; padding-right:1.5rem !important;}
+html.annie-tour .st-key-detail_cols > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"] {flex-wrap:wrap !important;}
+html.annie-tour .st-key-detail_cols > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]
+    {flex:1 1 100% !important; min-width:100% !important;}
+html.annie-tour .st-key-detail_cols > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) {order:-1;}
 
 #tour-shield {position:fixed; inset:0; z-index:1000010; cursor:none;}   /* the presenter drives with the panel, not the page */
 #tour-ring {position:fixed; z-index:1000011; border-radius:12px; pointer-events:none; opacity:0; transition:opacity .35s ease;
@@ -273,8 +289,9 @@ ENGINE = """
     const r = e.getBoundingClientRect(), W = innerWidth, H = innerHeight - panel.offsetHeight - 34;
     const s = Math.max(1, Math.min(most, .86 * W / r.width, .84 * H / r.height));
     const x = Math.min(0, Math.max(W - s * W, W / 2 - s * (r.left + r.width / 2)));
-    // an element at the very end of a page may lift the app a little, so it is never hidden behind the panel
-    const y = Math.min(0, H / 2 - s * (r.top + r.height / 2));
+    // an element at the very end of a page may lift the app a little, so it is never hidden behind the panel;
+    // one taller than the free space is shown from its top
+    const y = Math.min(0, s * r.height > H ? 14 - s * r.top : H / 2 - s * (r.top + r.height / 2));
     setCamera(x, y, s);
     const left = x + s * r.left, top = y + s * r.top, w = s * r.width, h = s * r.height, pad = 8;
     Object.assign(ring.style, {left: left - pad + 'px', top: top - pad + 'px', width: w + 2 * pad + 'px', height: h + 2 * pad + 'px'});
@@ -304,12 +321,14 @@ ENGINE = """
     await zoomOut();
     const step = steps[i];
     const prefix = path.length <= step.path.length && path.every((p, n) => p === step.path[n]);
-    for (const sel of prefix ? step.path.slice(path.length) : step.path) await clickOn(sel, shown);
+    const clicks = prefix ? step.path.slice(path.length) : step.path;
+    for (const sel of clicks) await clickOn(sel, shown);
     if (gone) return;
     path = step.path; at = i; focused = step;
     say_(step.section, step.title, step.text);
     const e = await waitFor(step.focus);
     if (e && !gone) {
+      if (clicks.length && shown) await sleep(700);   // a new page: let the audience see all of it before zooming in
       await reveal(e);
       const r = e.getBoundingClientRect();
       await moveCursor(r.left + r.width / 2, r.top + r.height / 2, !shown);

@@ -209,19 +209,26 @@ def nice(code):
     return str(code or "").replace("_", " ").capitalize()
 
 
-def render_results(results):
+def render_results(results, top=7):
+    """Newest first. The filter bar and the first `top` rows share a container, so the Play demo can frame just them."""
     if not results:
         st.caption("Nothing submitted in this session yet. Processed files are listed here with where Annie routed them.")
         return
-    rows = list(results)[::-1]
-    rows = controls("results", rows, ["source_file", "m1_status", "route", "record_id"])
-    for r in rows:
-        m2 = r.get("m2") or {}
-        parts = [f"**{md(r.get('source_file') or r.get('record_id'))}**", nice(r.get("m1_status")), nice(r.get("route"))]
-        if m2:
-            parts.append(" ".join(md(x) for x in (nice(m2.get("outcome")), m2.get("case_id"), m2.get("status")) if x))
-        with st.expander("  ·  ".join(parts)):
-            st.json(r)
+    with st.container(key="results_top"):
+        rows = controls("results", list(results)[::-1], ["source_file", "m1_status", "route", "record_id"])
+        for r in rows[:top]:
+            result_row(r)
+    for r in rows[top:]:
+        result_row(r)
+
+
+def result_row(r):
+    m2 = r.get("m2") or {}
+    parts = [f"**{md(r.get('source_file') or r.get('record_id'))}**", nice(r.get("m1_status")), nice(r.get("route"))]
+    if m2:
+        parts.append(" ".join(md(x) for x in (nice(m2.get("outcome")), m2.get("case_id"), m2.get("status")) if x))
+    with st.expander("  ·  ".join(parts)):
+        st.json(r)
 
 
 # =====================================================================================
@@ -287,7 +294,7 @@ def manual_panel(case_id):
         with st.form(f"mm_form_{case_id}", border=False):
             edited = st.data_editor(pd.DataFrame(seed), num_rows="dynamic", hide_index=True, key=f"mm_{case_id}", disabled=["invoice_item"],
                                     column_config={"inv_line": st.column_config.NumberColumn("Invoice line", min_value=1, max_value=len(inv_lines), step=1),
-                                                   "invoice_item": "Invoice item",
+                                                   "invoice_item": st.column_config.TextColumn("Invoice item", width="medium"),
                                                    "po_line": st.column_config.SelectboxColumn("PO/PR line", options=list(by_label), width="large", required=True),
                                                    "allocate": st.column_config.NumberColumn("Qty / amount", min_value=0.0)})
             reason = st.text_input("Reason for the manual match (required to confirm)", key=f"mm_reason_{case_id}")
@@ -1009,7 +1016,8 @@ elif page == "submit":
     st.caption("Every document goes through Module 1 (duplicate check, extraction, field check) first. Only documents "
                "with every mandatory field enter Annie; the rest wait in Intake Review. PO/PRs and invoices can arrive "
                "in any order: invoices are allocated to PO/PR lines as soon as the balances allow.")
-    up_col, mail_col = st.columns(2, gap="large")
+    with st.container(key="submit_cards"):
+        up_col, mail_col = st.columns(2, gap="large")
     with up_col, st.container(key="card_upload"):
         st.subheader("Upload documents")
         files = st.file_uploader("PDF, image, DOCX, TXT, CSV or XLSX", type=UPLOAD_TYPES, accept_multiple_files=True)
@@ -1042,7 +1050,7 @@ elif page == "submit":
                     st.error(f"Email check failed: {e}")
     st.divider()
     st.subheader("Results this session")
-    render_results(ss.results)
+    render_results(tour.results() if ss.tour_on else ss.results)   # the Play demo shows how its sample files were routed
 
 
 # =====================================================================================
