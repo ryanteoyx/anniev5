@@ -1737,7 +1737,16 @@ def allocate_invoice(con, case_id: str, force: bool = False) -> dict:
                 else:
                     spent = sorted({l["po_reference"] for l in po_lines if (allowed is None or _ref_norm(l["po_reference"]) in allowed)
                                     and (vendor_sim(p.get("vendor_name"), l["vendor"]) or 0) >= VENDOR_AUTO})
-                    why = f": {', '.join(spent)} has nothing left to bill" if spent else " (no PO/PR for this vendor)"
+                    near = sorted({(round(vendor_sim(p.get("vendor_name"), l["vendor"]) or 0, 2), l["po_reference"]) for l in po_lines
+                                   if (allowed is None or _ref_norm(l["po_reference"]) in allowed) and local[l["line_id"]] > 1e-9
+                                   and VENDOR_MIN <= (vendor_sim(p.get("vendor_name"), l["vendor"]) or 0) < VENDOR_AUTO}, reverse=True)
+                    if spent:
+                        why = f": {', '.join(spent)} has nothing left to bill"
+                    elif near:   # message only: a close-but-not-close-enough vendor name is never billed automatically
+                        why = (f": vendor name on {', '.join(sorted({r for _, r in near}))} is similar but not close enough "
+                               f"({near[0][0]:.2f}, needs {VENDOR_AUTO:.2f}) - check it and use Manual match")
+                    else:
+                        why = " (no PO/PR for this vendor)"
                 reasons.append(f"'{label}' matches no open PO line" + why)
                 continue
             pick = None

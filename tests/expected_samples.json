@@ -79,10 +79,10 @@
     },
     "CASE-2026-0010": {
       "invoice": "CB-26-1180",
-      "po": "PR-2026-0370",
-      "reason": "",
-      "score": 0.8649,
-      "status": "Pending GR/SES"
+      "po": "",
+      "reason": "'Quarterly aircon servicing - Levels 3 to' matches no open PO line: vendor name on PR-2026-0370 is similar but not close enough (0.79, needs 0.90) - check it and use Manual match",
+      "score": null,
+      "status": "Open - Pending PO/PR"
     },
     "CASE-2026-0011": {
       "invoice": "LS-0457",
@@ -123,8 +123,8 @@
   "counts": {
     "calloff": 2,
     "review": 1,
-    "s1": 15,
-    "s2": 6,
+    "s1": 17,
+    "s2": 5,
     "s3": 0
   },
   "intake": {
@@ -227,7 +227,7 @@
     "P61_INV_CB-26-1180_CoolBreeze_NO_PO_cited.pdf": {
       "doc_type": "INVOICE",
       "m1_status": "READY_FOR_MODULE_2",
-      "outcome": "ALLOCATED",
+      "outcome": "UNALLOCATED",
       "route": "MODULE_2"
     },
     "P62_PO_PR-2026-0381_Lenscape_photography.pdf": {
@@ -324,9 +324,9 @@
       "status": "Open - Pending Invoice"
     },
     "PR-2026-0370": {
-      "billed": 2400.0,
-      "open": 0.0,
-      "status": "Fully billed"
+      "billed": 0.0,
+      "open": 2400.0,
+      "status": "Open - Pending Invoice"
     },
     "PR-2026-0381": {
       "billed": 0.0,

@@ -225,7 +225,8 @@ line, or the whole invoice waits in Stage 1 with a reason.
 
 **Step 2: candidate PO/PR lines.** For each invoice line, a PO/PR line is a candidate only if:
 
-* the vendor names are at least **0.70** similar (`VENDOR_MIN`),
+* the vendor names are at least **0.90** similar (`VENDOR_AUTO`), after legal endings such as Pte, Ltd, Sdn Bhd,
+  LLC and Inc are dropped ("ABC Pte. Ltd." and "ABC Private Limited" both compare as "abc"),
 * the line still has an open balance,
 * the **currency is the same** as the invoice's (only checked when both documents state a currency;
   an unknown currency never blocks), and
@@ -300,7 +301,8 @@ The case shows one or more of these reasons:
 | `PR-... is a Call-Off PO/PR (no amount cited)` | Match it by hand from the Call-Offs tab. |
 | `'<line>' matches no open PO line (best 0.xx)` | Candidates exist but none reach 0.80. |
 | `'<line>' matches no open PO line: PR-... has nothing left to bill` | The vendor's PO/PRs are fully billed. |
-| `'<line>' matches no open PO line (no PO/PR for this vendor)` | No PO/PR with a vendor name at least 0.70 similar. |
+| `'<line>' matches no open PO line: vendor name on PR-... is similar but not close enough (0.xx, needs 0.90) - check it and use Manual match` | A PO/PR exists for a vendor name 0.70-0.89 similar. Annie never bills it automatically; a person checks it is the same vendor. |
+| `'<line>' matches no open PO line (no PO/PR for this vendor)` | No open PO/PR with a vendor name at least 0.70 similar. |
 | `'<line>' matches no open PO line: PR-... is in SGD but the invoice is in USD` | The only candidates are in another currency. |
 | `'<line>' is held for review - PR-...: <reason>` | A goods line failed a guard rail: wrong item, price too high or line total too high. Match it by hand if it is correct. |
 | `'<line>' bills 4 but PR-... has only 3 left to bill` | A good match, but the invoice asks for more than is left: **overbilling**. |
@@ -415,7 +417,8 @@ Pending GR/SES and Complete include Call-Off cases in those states.
 | `PRICE_TOLERANCE` | 5% | Module 2 | How far a goods unit price may exceed the PO/PR price before the line is held |
 | `ARITH_TOLERANCE` | 0.5% + 0.05 | Module 2 | How far a goods line total may exceed quantity x unit price before the line is held |
 | `DESC_FLOOR` | 0.40 | Module 2 | Minimum resemblance between a goods invoice line and the PO/PR item |
-| `VENDOR_MIN` | 0.70 | Module 2 | Minimum vendor-name similarity for a candidate (and the warning level in manual matching) |
+| `VENDOR_AUTO` | 0.90 | Module 2 | Minimum vendor-name similarity for automatic allocation (legal endings ignored) |
+| `VENDOR_MIN` | 0.70 | Module 2 | Warning level in manual and Call-Off matching; below it the vendor name "looks different" |
 | Duplicate invoice vendor check | 0.90 | Module 2 | Vendor similarity for "same invoice number from the same vendor" |
 | `ENFORCE_UNIQUE_INVOICE_NUMBER` | on | Module 2 | Reject a repeated invoice number from the same vendor (sent to Intake Review) |
 | Currency rule | same code, or one unknown | Module 2 | An invoice is never billed against a PO/PR in another currency |
@@ -436,7 +439,7 @@ file-name order, they produce:
 | P07, P08, P09 | Zenith: one invoice citing two PO/PRs that arrive later | Invoice waits ("PO/PR not yet received"), then allocates across both when they arrive |
 | P10, P11 | BrightPrint: invoice bills 4 banners, PO has 3 | Waits: overbilling caught |
 | P12, P13, P14, P31 | PestGuard service PO with no amount; invoices; one with different wording and no PO cited | Call-Off opened; the invoices wait in Stage 1 until someone matches them to it |
-| P60, P61 | CoolBreeze aircon service; invoice citing no PO | Allocated by description |
+| P60, P61 | CoolBreeze aircon service; invoice citing no PO, from "CoolBreeze Aircon **Services** Pte Ltd" | Waits in Stage 1: vendor name 0.79 similar, under 0.90; match it by hand |
 | P62, P63 | Lenscape photography; invoice above the PO amount | Waits: overbilling caught |
 | P64, P65 | GreenGrocer market-price ingredients (no amount) | Call-Off; invoice waits for a manual match |
 | S09 | Orion courier invoice with no invoice number or date | Held in Intake Review: mandatory fields missing |

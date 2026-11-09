@@ -285,6 +285,16 @@ ENGINE = """
     }
   }
 
+  async function settle(e) {   // wait until the element stops moving (Streamlit draws long pages in several passes)
+    let last = '', still = 0;
+    for (const end = Date.now() + 3000; Date.now() < end && still < 4 && e.isConnected; ) {
+      await sleep(100);
+      const r = e.getBoundingClientRect(), k = [r.top, r.left, r.height].map(Math.round).join();
+      still = k === last ? still + 1 : 0;
+      last = k;
+    }
+  }
+
   async function clickOn(sel, shown) {
     const e = !gone && await waitFor(sel);
     if (!e || gone) return;
@@ -310,14 +320,18 @@ ENGINE = """
     cursor.style.transition = 'transform .85s cubic-bezier(.65,0,.25,1), opacity .25s ease';
     cursor.style.transform = `translate(${cx = left + (small ? w / 2 : w - 18)}px, ${cy = top + (small ? h / 2 : h - 18)}px)`;
     await sleep(900);
-    // the page can still settle while the camera moves (rows above re-measure): frame what is really there now
-    let now = e.getBoundingClientRect();
-    if (e.isConnected && (Math.abs(now.top - top) > 6 || Math.abs(now.left - left) > 6)) {
-      setCamera(x + left - now.left, Math.min(0, y + top - now.top), s);
-      await sleep(560);
+    // the page can still settle while the camera moves (rows above re-measure): frame what is really there now,
+    // again and again until it stops moving (a long list can take a few passes)
+    let now = e.getBoundingClientRect(), camX = x, camY = y, moved = false;
+    for (let k = 0; k < 5 && e.isConnected && !gone; k++) {
       now = e.getBoundingClientRect();
-      cursor.style.transform = `translate(${cx = now.left + (small ? now.width / 2 : now.width - 18)}px, ${cy = now.top + (small ? now.height / 2 : now.height - 18)}px)`;
+      if (Math.abs(now.top - top) <= 6 && Math.abs(now.left - left) <= 6) break;
+      camX += left - now.left; camY = Math.min(0, camY + top - now.top); moved = true;
+      setCamera(camX, camY, s);
+      await sleep(560);
     }
+    now = e.getBoundingClientRect();
+    if (moved) cursor.style.transform = `translate(${cx = now.left + (small ? now.width / 2 : now.width - 18)}px, ${cy = now.top + (small ? now.height / 2 : now.height - 18)}px)`;
     Object.assign(ring.style, {left: now.left - pad + 'px', top: now.top - pad + 'px', width: now.width + 2 * pad + 'px', height: now.height + 2 * pad + 'px'});
     cursor.style.transition = '';
     ring.classList.add('on');
@@ -364,6 +378,7 @@ ENGINE = """
     const e = await waitFor(step.focus);
     if (e && !gone) {
       if (clicks.length && shown) await sleep(700);   // a new page: let the audience see all of it before zooming in
+      await settle(e);
       await reveal(e);
       const r = e.getBoundingClientRect();
       await moveCursor(r.left + r.width / 2, r.top + r.height / 2, !shown);

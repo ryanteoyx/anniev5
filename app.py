@@ -1276,7 +1276,8 @@ elif page == "controls":
         st.write(f"Reference samples: {ref['purchase_orders']} PO/PR, {ref['supplier_invoices']} invoices")
         em = annie.email_config_status()
         st.write("Email: " + ("configured" if em["ok"] else "missing " + ", ".join(em["missing"])))
-        st.caption(f"Line-match threshold >= {annie.LINK_THRESHOLD}   |   Vendor-name gate >= {annie.VENDOR_MIN}")
+        st.caption(f"Line-match threshold >= {annie.LINK_THRESHOLD}   |   Vendor name: >= {annie.VENDOR_AUTO} to match automatically, "
+                   f"warning below {annie.VENDOR_MIN} in manual match (Pte Ltd, Sdn Bhd, LLC... ignored)")
     with st.container(key="card_danger"):
         st.subheader("Danger zone")
         if st.button("Reset database (empty)", key="reset_db", disabled=not unlocked):
