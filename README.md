@@ -13,6 +13,7 @@ There is no external AI service and no API key to manage.
 
 ## Documentation
 
+- **[User manual](USER_MANUAL.md): install, run and use Annie, page by page. Start here.**
 - [How Annie works: business logic](docs/BUSINESS_LOGIC.md): every rule, score and threshold, with
   worked examples from the sample data and the open review findings.
 - [Technical architecture](docs/ARCHITECTURE.md): components, data model, concurrency, UI layer,
@@ -42,10 +43,12 @@ There is no external AI service and no API key to manage.
 
 ```bash
 python3.11 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 streamlit run app.py
 ```
+
+Settings are optional: copy `.env.example` to `.env` (admin PIN, email inbox).
 
 The app opens at http://localhost:8501 and loads the 28 sample documents from `samples/` on first
 start. To reset it, set `ADMIN_PIN` in a `.env` file and use **Controls → Demo data**.
@@ -54,6 +57,7 @@ Run the tests after changing `annie_core.py`:
 
 ```bash
 python tests/test_findings.py
+python tests/test_tour.py
 python tests/sample_regression.py
 ```
 
@@ -111,10 +115,12 @@ The mailbox is opened read-only and mail is never marked as read.
 
 | Path | Purpose |
 |------|---------|
+| `USER_MANUAL.md` | Install, run and use Annie |
+| `requirements.txt`, `.env.example` | Python packages (tested versions) and optional settings |
 | `app.py` | Streamlit UI |
 | `annie_core.py` | Engine: extraction, classification, matching, storage, inbox monitor |
 | `samples/` | 28 sample PO/PRs and invoices (the demo data) |
-| `reference_samples/` | Optional reference documents and labels that tune classification |
+| `reference_samples/` | Optional reference documents and labels that tune classification (created empty on first start) |
 | `docs/` | Business logic and architecture documentation |
 | `tests/` | Rule tests and the sample-set regression check |
 | `tour.py` | The Play demo guided tour |

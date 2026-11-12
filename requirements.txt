@@ -1,14 +1,15 @@
-streamlit==1.66.1
-pandas
-pdfplumber
-openpyxl
-python-dotenv
-Pillow
-pytesseract
-PyMuPDF
-python-docx
-pillow-heif
-rapidocr
-onnxruntime
-numpy
-playwright
+# Annie - Python packages. Tested with Python 3.11 (3.12 also works).
+# Install:  pip install -r requirements.txt
+streamlit==1.66.1      # web interface
+pandas==3.1.1          # tables, CSV/Excel intake
+numpy==2.4.6
+openpyxl==3.1.5        # .xlsx files
+pdfplumber==0.11.10    # PDF text and tables
+PyMuPDF==2.1           # PDF rendering (OCR, signature check)
+python-docx==1.2.0     # .docx files
+Pillow==13.0.0         # images
+pillow-heif==1.8.1     # .heic photos from phones
+rapidocr==3.10.0       # OCR for scanned documents (no system install needed)
+onnxruntime==1.31.1    # runs the RapidOCR models
+pytesseract==0.3.13    # optional OCR fallback; needs the Tesseract program installed
+python-dotenv==1.2.4   # reads settings from .env
