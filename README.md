@@ -47,10 +47,18 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Settings are optional: copy `.env.example` to `.env` (admin PIN, email inbox).
-
 The app opens at http://localhost:8501 and loads the 28 sample documents from `samples/` on first
-start. To reset it, set `ADMIN_PIN` in a `.env` file and use **Controls → Demo data**.
+start.
+
+**To reset or reload the data (admin PIN: `67`):**
+
+1. Copy `.env.example` to `.env` in the project folder (`cp .env.example .env`; on Windows `copy .env.example .env`).
+   The copy already sets `ADMIN_PIN=67`.
+2. Restart the app (Ctrl+C, then `streamlit run app.py`).
+3. Open **Controls**, enter `67` and press **Unlock**, then choose **Reset & load demo data** (back to the 28 sample
+   documents) or **Danger zone → Reset database (empty)** (empty app for live uploads).
+
+The same `.env` file holds the optional email inbox settings.
 
 Run the tests after changing `annie_core.py`:
 
@@ -87,8 +95,8 @@ For a self-hosted VM where data persists, see [deploy/](deploy/).
   `reset` (reload the samples on every start), `1` (empty database only) or `0` (off).
 - **Controls → Demo data → Reset & load demo data** restores the starting state before a
   presentation; **Danger zone → Reset database (empty)** clears everything for live uploads.
-- Both need the **admin PIN**: `ADMIN_PIN` under the service's Variables on Railway, or
-  `ADMIN_PIN=...` in `.env` locally. Without a PIN they stay locked, and visitors can still browse,
+- Both need the **admin PIN**: `67` when run locally with the `.env` copied from `.env.example` (see Quick start), or
+  `ADMIN_PIN` under the service's Variables on Railway. Without a PIN they stay locked, and visitors can still browse,
   open cases and upload. The live demo runs without one: redeploy the service in Railway to restore
   the starting state.
 

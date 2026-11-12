@@ -230,7 +230,7 @@ Settings come from environment variables (Railway Variables, or a `.env` file lo
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `ADMIN_PIN` | not set | Unlocks *Reset & load demo data* and *Reset database*. Without it both stay locked. |
+| `ADMIN_PIN` | not set (`.env.example`: `67`) | Unlocks *Reset & load demo data* and *Reset database*. Without it both stay locked. |
 | `DEMO_AUTOLOAD` | `1` | At start: `reset` clears the database and loads the sample documents; `1` loads them only into an empty database; `0` never. |
 | `EMAIL_HOST`, `EMAIL_ADDRESS`, `EMAIL_PASSWORD` | not set | IMAP account for email intake (all three required) |
 | `EMAIL_PORT` | `993` | IMAP over SSL |
