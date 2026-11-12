@@ -13,7 +13,6 @@ There is no external AI service and no API key to manage.
 
 ## Documentation
 
-- **[User manual](USER_MANUAL.md): install, run and use Annie, page by page. Start here.**
 - [How Annie works: business logic](docs/BUSINESS_LOGIC.md): every rule, score and threshold, with
   worked examples from the sample data and the open review findings.
 - [Technical architecture](docs/ARCHITECTURE.md): components, data model, concurrency, UI layer,
@@ -115,7 +114,6 @@ The mailbox is opened read-only and mail is never marked as read.
 
 | Path | Purpose |
 |------|---------|
-| `USER_MANUAL.md` | Install, run and use Annie |
 | `requirements.txt`, `.env.example` | Python packages (tested versions) and optional settings |
 | `app.py` | Streamlit UI |
 | `annie_core.py` | Engine: extraction, classification, matching, storage, inbox monitor |
